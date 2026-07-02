@@ -1,0 +1,1311 @@
+<!doctype html>
+<html>
+<head>
+<meta http-equiv="x-ua-compatible" content="IE=edge">
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<title>PECmd Wrapper</title>
+<HTA:APPLICATION
+  ID="pecmdHta"
+  APPLICATIONNAME="PECmd Wrapper"
+  BORDER="thick"
+  CAPTION="yes"
+  SCROLL="auto"
+  SINGLEINSTANCE="yes"
+  SHOWINTASKBAR="yes"
+  MAXIMIZEBUTTON="yes"
+  MINIMIZEBUTTON="yes"
+  INNERBORDER="no"
+  CONTEXTMENU="yes"
+  SELECTION="yes" />
+<!--
+  PECmd CSV contract, VERIFIED 2026-07-02 against PECmd 2026.5.0 output:
+
+  <ts>_PECmd_Output.csv  (one row per prefetch file):
+    Note,SourceFilename,SourceCreated,SourceModified,SourceAccessed,ExecutableName,Hash,Size,Version,
+    RunCount,LastRun,PreviousRun0,PreviousRun1,PreviousRun2,PreviousRun3,PreviousRun4,PreviousRun5,PreviousRun6,
+    Volume0Name,Volume0Serial,Volume0Created,Volume1Name,Volume1Serial,Volume1Created,
+    Directories,FilesLoaded,ParsingError
+    - all timestamps UTC "yyyy-MM-dd HH:mm:ss"; Directories/FilesLoaded are ", "-joined lists in one quoted cell;
+      paths are \VOLUME{...}-prefixed; ParsingError is True/False.
+
+  <ts>_PECmd_Output_Timeline.csv  (one row per execution event):
+    RunTime,ExecutableName
+    - ExecutableName here is the FULL \VOLUME{...} path, not the bare name.
+
+  Old prefetch parsers choke on Win11 24H2 v31 (0x1F) .pf files — PECmd >= 2026.x required (1.5.0 fails).
+  PECmd needs a real console (net4 build crashes at Console.WindowWidth without one) → always run via cmd window.
+-->
+<style>
+  html{margin:0;height:100%;background:#0d1117}
+  body{margin:0;height:100%;background:#0d1117;color:#e6edf3;font-family:Segoe UI,Tahoma,sans-serif;font-size:16px;zoom:0.9}
+  a{color:#58a6ff}
+  .mono{font-family:Consolas,"Courier New",monospace}
+  .muted{color:#8b949e}
+  .err{color:#f85149}
+  .ok{color:#3fb950}
+  header{padding:8px 14px;background:#161b22;border-bottom:1px solid #30363d}
+  header h1{display:inline-block;font-size:15px;margin:0;font-weight:600;vertical-align:middle}
+  header h1 small{color:#8b949e;font-weight:400}
+  .pill{display:inline-block;font-size:11px;color:#8b949e;border:1px solid #30363d;border-radius:20px;padding:2px 10px;margin-left:8px;vertical-align:middle}
+  .wrap{padding:12px 14px}
+  .card{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:12px;margin-bottom:12px}
+  .card h3{margin:0 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.5px;color:#8b949e}
+  label.fld{display:block;margin:6px 0 2px;font-size:11px;color:#8b949e}
+  input.txt,select,textarea{background:#1c2330;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:5px 8px;font-size:13px;font-family:Consolas,monospace}
+  input.wide{width:62%}
+  .btn{background:#1c2330;border:1px solid #30363d;color:#e6edf3;border-radius:6px;padding:6px 12px;font-size:13px;cursor:pointer;margin:2px}
+  .btn:hover{border-color:#58a6ff}
+  .btn.primary{background:#1f6feb;border-color:#1f6feb}
+  .btn.on{background:#1f6feb;border-color:#1f6feb;color:#fff}
+  .row{white-space:nowrap}
+  .stat{display:inline-block;background:#1c2330;border:1px solid #30363d;border-radius:8px;padding:6px 12px;margin:0 6px 6px 0;min-width:70px;vertical-align:top}
+  .stat .n{font-size:17px;font-weight:700;display:block}
+  .stat .l{font-size:10px;color:#8b949e;text-transform:uppercase;letter-spacing:.5px}
+  .cards3{width:100%}
+  .col3{display:inline-block;width:32%;vertical-align:top;margin-right:1%}
+  .brow{white-space:nowrap;margin:3px 0}
+  .blab{display:inline-block;width:46%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;font-family:Consolas,monospace;font-size:11px}
+  .blab.lnk{cursor:pointer;color:#58a6ff}
+  .blab.lnk:hover{text-decoration:underline}
+  .btrack{display:inline-block;width:32%;height:12px;background:#1c2330;border-radius:3px;overflow:hidden;vertical-align:middle}
+  .bfill{display:block;height:100%;background:#1f6feb}
+  .bval{display:inline-block;width:18%;text-align:right;font-size:11px;color:#8b949e;vertical-align:middle}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th,td{text-align:left;padding:4px 7px;border-bottom:1px solid #30363d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  th{background:#1c2330;cursor:pointer;color:#c9d1d9;position:relative;z-index:3;box-shadow:0 1px 0 #30363d}
+  th:hover{color:#58a6ff}
+  td{max-width:360px}
+  tr.sus td{background:#2a1416}
+  tr.sus td.first{border-left:3px solid #ff6b6b}
+  tr.sel td{background:#1c2f4a}
+  .scroll{max-height:52vh;overflow:auto;border:1px solid #30363d;border-radius:8px}
+  .tag{display:inline-block;font-size:10px;padding:1px 6px;border-radius:10px;font-weight:600;margin-right:3px}
+  .tag.sus{background:#3a1416;color:#ff6b6b}
+  .tag.usr{background:#3a2d10;color:#d29922}
+  .tag.lol{background:#10263f;color:#58a6ff}
+  .tag.rare{background:#241a3a;color:#b083f0}
+  .tag.ioc{background:#3a1416;color:#ff6b6b;border:1px solid #ff6b6b}
+  .tag.gen{background:#21262d;color:#8b949e}
+  .dl{font-family:Consolas,"Courier New",monospace;font-size:11px;max-height:210px;overflow:auto;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:6px;margin:4px 0;white-space:nowrap}
+  .dl div{overflow:hidden;text-overflow:ellipsis}
+  .hl-user{color:#d29922}
+  .hl-ioc{color:#ff6b6b;font-weight:700}
+  #log{white-space:pre-wrap;font-family:Consolas,monospace;font-size:11px;color:#8b949e;max-height:140px;overflow:auto;background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:8px;display:none;margin-top:8px}
+  .hide{display:none}
+  .lnk{cursor:pointer;color:#58a6ff}
+  .lnk:hover{text-decoration:underline}
+  .sep{display:inline-block;width:1px;height:18px;background:#30363d;margin:0 6px;vertical-align:middle}
+</style>
+</head>
+<body>
+<header>
+  <h1>PECmd Wrapper <small>&mdash; DFIR prefetch triage <span id="appver"></span></small></h1>
+  <span class="pill" id="verpill">version: checking&hellip;</span>
+  <span class="pill" id="srcpill">no data loaded</span>
+  <span style="float:right">
+    <button class="btn" id="fdown" title="Smaller text">A&minus;</button>
+    <button class="btn" id="fup" title="Larger text">A+</button>
+  </span>
+</header>
+
+<div class="wrap">
+
+  <!-- CONTROL PANEL -->
+  <div class="card">
+    <h3>PECmd control panel</h3>
+    <div class="muted" id="exeline" style="font-size:11px;margin-bottom:6px"></div>
+    <label class="fld">Prefetch to process
+      &mdash; <select id="inMode" title="Single file = process one .pf (PECmd -f). Directory = recurse a folder (PECmd -d) and process every prefetch file found inside (KAPE/Velociraptor collection trees work as-is).">
+        <option value="d">directory (recursive)</option><option value="f">single .pf file</option></select>
+      &nbsp;<label style="font-size:12px" title="-q: quiet console output. Strongly recommended for directory runs — printing per-file detail to the console is the slow part on big trees.">
+        <input type="checkbox" id="optQuiet" checked> quiet</label>
+      &nbsp;<label style="font-size:12px" title="--dedupe: when the same prefetch file appears more than once in a directory tree (identical SHA-1), process it only once. Handy for VSS / backup / KAPE trees holding duplicate copies.">
+        <input type="checkbox" id="optDedupe" checked> dedupe</label>
+      &nbsp;<label style="font-size:12px" title="--mp: display higher-precision timestamps (sub-second).">
+        <input type="checkbox" id="optMp"> precise timestamps</label>
+      &nbsp;<label style="font-size:12px" title="--vss: also process Volume Shadow Copies. Requires an elevated run against a LIVE local volume; has no effect on copied collection trees.">
+        <input type="checkbox" id="optVss"> shadow copies</label>
+    </label>
+    <input class="txt wide" id="pfPath" value="">
+    <input type="file" id="pfPick" style="display:none">
+    <button class="btn" id="browseBtn">Browse&hellip;</button>
+    <button class="btn" id="liveBtn" title="Point at this machine's live C:\Windows\Prefetch. Reading it requires the app to run elevated (right-click → Run as administrator).">Scan this machine</button>
+    <label class="fld">CSV output directory</label>
+    <input class="txt wide" id="outDir" value="">
+    <button class="btn" id="openDirBtn">Open folder</button>
+    <div style="margin-top:10px">
+      <button class="btn" id="verBtn">Check version</button>
+      <button class="btn" id="updBtn">Update / download PECmd</button>
+      <span class="sep"></span>
+      <button class="btn primary" id="procBtn">Process &rarr; analyze</button>
+      <button class="btn" id="loadBtn">Load existing CSV&hellip;</button>
+      <input type="file" id="csvPick" style="display:none">
+      <span class="sep"></span>
+      <button class="btn" id="logToggle">Show log</button>
+      <span class="muted" id="status" style="margin-left:8px"></span>
+    </div>
+    <div style="margin-top:8px" id="producedRow" class="hide">
+      <label class="fld">Produced CSVs &mdash; pick one to view</label>
+      <select id="producedSel" style="min-width:70%"></select>
+      <button class="btn" id="loadSelBtn">Load selected</button>
+    </div>
+    <div id="log"></div>
+  </div>
+
+  <!-- RESULTS -->
+  <div id="results" class="hide">
+    <div class="card">
+      <h3 id="ovTitle">Overview</h3>
+      <div id="statbar"></div>
+    </div>
+
+    <div class="card cards3 hide" id="pfCards">
+      <div class="col3"><h3>Top executables (by run count)</h3><div id="topExes"></div></div>
+      <div class="col3"><h3>Recently first-seen (.pf created)</h3><div id="topNew"></div></div>
+      <div class="col3"><h3>Suspicious executables</h3><div id="topSus"></div></div>
+    </div>
+
+    <div class="card">
+      <h3 id="tableTitle">Records</h3>
+      <div class="row hide" style="margin-bottom:8px" id="viewToggle">
+        <button class="btn on" id="vExec" title="One row per prefetch file (per executable+hash)">Executables</button>
+        <button class="btn" id="vTime" title="One row per recorded execution — LastRun plus the 7 previous run timestamps of every prefetch file, flattened and sorted">Timeline (every execution)</button>
+      </div>
+      <div class="row hide" style="margin-bottom:8px" id="pfCats">
+        <button class="btn on" data-cat="all">All</button>
+        <button class="btn" data-cat="sus">Suspicious</button>
+        <button class="btn" data-cat="userpath">User-path</button>
+        <button class="btn" data-cat="lolbin">LOLBIN</button>
+        <button class="btn" data-cat="rare">Rare</button>
+        <button class="btn" data-cat="recent">Recent</button>
+        <button class="btn" data-cat="ioc">IOC hits</button>
+      </div>
+      <div class="row" style="margin-bottom:8px">
+        <input class="txt" id="q" placeholder="search all columns + loaded files&hellip;" style="width:280px">
+        <span id="srcWrap" class="hide"><span class="sep"></span><label class="muted" style="font-size:12px">source:</label>
+          <select id="srcSel" title="Filter by source file."><option value="">all source files</option></select></span>
+        <span id="pfDateCtl" class="hide">
+          <span class="sep"></span>
+          <input class="txt mono" id="dfrom" placeholder="from YYYY-MM-DD" style="width:140px" title="Filter by LastRun (UTC)">
+          <span class="muted">&rarr;</span>
+          <input class="txt mono" id="dto" placeholder="to YYYY-MM-DD" style="width:140px" title="Filter by LastRun (UTC)">
+        </span>
+        <span class="sep"></span>
+        <button class="btn" id="iocBtn">IOC / keywords&hellip;</button>
+        <button class="btn" id="clearBtn">clear</button>
+        <button class="btn" id="exportBtn">Export view &rarr; CSV</button>
+        <button class="btn" id="copyBtn">Copy for case notes</button>
+        <span class="muted" id="count" style="margin-left:8px"></span>
+      </div>
+      <div id="iocWrap" class="hide" style="margin-bottom:8px">
+        <label class="fld">IOC / keyword list — comma or newline separated; matched (case-insensitive substring) against executable, run path, directories and every loaded file. Matches score +3 and light up red in the detail pane.</label>
+        <textarea id="iocBox" rows="3" style="width:70%;vertical-align:top"></textarea>
+        <button class="btn" id="iocApply">Apply</button>
+        <button class="btn" id="iocLoad">Load file&hellip;</button>
+        <input type="file" id="iocPick" style="display:none">
+        <span class="muted" id="iocInfo" style="font-size:11px"></span>
+      </div>
+      <div class="scroll" id="tblScroll"><table id="tbl"></table></div>
+      <div class="muted" id="pfFoot" style="font-size:11px;margin-top:6px">All timestamps UTC. Suspicious rows are shaded (heuristic score &ge; 2: user-path execution, LOLBIN, masquerade, IOC hits&hellip;). Click a row for full detail (all run times, volumes, directories, loaded files). Max 6000 rows shown; export writes the full filtered set.</div>
+    </div>
+
+    <div class="card hide" id="detailCard">
+      <h3>Record detail <span class="lnk" id="detCopy" style="float:right;margin-left:12px">copy record</span><span class="lnk" id="detClose" style="float:right">close &times;</span></h3>
+      <div id="detBody"></div>
+    </div>
+  </div>
+
+</div>
+
+<script language="JScript">
+"use strict";
+
+var APP_VERSION = "0.3.1";
+var KNOWN_LATEST_PECMD = "2026.5.0";                                            // baseline as of 2026-07-02
+var PECMD_ZIP_URL = "https://download.ericzimmermanstools.com/net9/PECmd.zip";  // official EZ mirror (.NET 9 build)
+var PECMD_PAGE = "https://ericzimmerman.github.io/";                            // for live latest-version lookup
+var LIVE_PREFETCH = "C:\\Windows\\Prefetch";
+var EXE = "";
+var EXE_DIR = "";
+var LOCAL_VER = "";
+var LATEST_VER = "";
+var WEB_OK = false;                  // could we reach the Zimmerman Tools site to check latest?
+var QUERY = "";
+var MAXROWS = 6000;
+var LASTOUTDIR = "";
+var qTimer = null;
+var MODE = "pf";                     // "pf" = rich prefetch analysis, "generic" = raw table
+var VIEW = "exec";                   // pf mode: "exec" = one row per prefetch file, "time" = one row per execution
+var ROWS = [];                       // pf records
+var EVENTS = [];                     // flattened execution events {t, ms, day, which, rec}
+var CURCAT = "all";
+var DFROM = 0, DTO = 0;
+var SORTKEY = 4, SORTDIR = -1;       // exec view: default LastRun desc
+var TSORTKEY = 1, TSORTDIR = -1;     // timeline view: default RunTime desc
+var IOCS = [];                       // lowercased IOC / keyword terms
+var DETREC = null;                   // record currently shown in the detail pane
+var GHEAD = null, GROWS = [], GSRC = "";
+var GSORTKEY = -1, GSORTDIR = 1;
+var GSRCIDX = -1;                    // generic mode: index of the SourceFile(name) column
+var SRCFILTER = "";                  // selected source-file filter (generic mode)
+var BUSY = false;                    // a PECmd run is in progress
+var PRODUCED = [];                   // CSVs produced by the last run
+
+/* suspicion knobs (spec §7) */
+var USERPATHS = ["\\users\\","\\appdata\\","\\temp\\","\\downloads\\","\\programdata\\","\\perflogs\\","\\windows\\temp\\","\\$recycle.bin\\","\\public\\"];
+var LOLBINS = {powershell:1,powershell_ise:1,pwsh:1,cmd:1,wscript:1,cscript:1,mshta:1,rundll32:1,regsvr32:1,certutil:1,certreq:1,
+  bitsadmin:1,msiexec:1,curl:1,wget:1,node:1,java:1,javaw:1,python:1,pythonw:1,php:1,autoit3:1,nc:1,ncat:1,psexec:1,psexesvc:1,
+  wmic:1,schtasks:1,reg:1,sc:1};
+var OSNAMES = {svchost:1,lsass:1,csrss:1,services:1,winlogon:1,explorer:1,taskhostw:1,dllhost:1,conhost:1,smss:1,wininit:1};
+var RECENT_DAYS = 14;
+
+/* ---------- tiny helpers ---------- */
+function $(id){ return document.getElementById(id); }
+function esc(s){ if(s==null) return ""; s=String(s);
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function endsWith(s,suf){ if(!s) return false; s=String(s); return s.length>=suf.length && s.substring(s.length-suf.length)===suf; }
+function contains(s,sub){ return String(s).indexOf(sub)>=0; }
+function nf(n){ n=String(n); var dot=n.indexOf("."); var dec=""; if(dot>=0){ dec=n.substring(dot); n=n.substring(0,dot); }
+  var r="",c=0; for(var k=n.length-1;k>=0;k--){ r=n.charAt(k)+r; c++; if(c%3===0&&k>0) r=","+r; } return r+dec; }
+function setStatus(msg,cls){ var el=$("status"); el.innerHTML=esc(msg); el.className=cls||"muted"; }
+function appendLog(t){ var el=$("log"); if(el.getAttribute("data-ph")==="1"){ el.innerHTML=""; el.setAttribute("data-ph","0"); }
+  el.style.display="block"; $("logToggle").innerHTML="Hide log"; el.innerHTML+=esc(t)+"\n"; el.scrollTop=el.scrollHeight; }
+function trimStr(s){ return String(s).replace(/^\s+|\s+$/g,""); }
+function baseName(p){ if(!p) return ""; p=String(p); var i=Math.max(p.lastIndexOf("\\"),p.lastIndexOf("/")); return i>=0?p.substring(i+1):p; }
+function showEl(id,vis){ var e=$(id); if(!e) return; var c=e.className.replace(/\s*\bhide\b/g,"");
+  e.className = vis ? c : (c+" hide"); }
+function msOf(s){ if(!s) return 0; var m=String(s).match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if(!m) return 0; return Date.UTC(+m[1], +m[2]-1, +m[3], +m[4], +m[5], +m[6]); }
+function dayOf(s){ if(!s) return 0; var m=String(s).match(/(\d{4})-(\d{2})-(\d{2})/); if(!m) return 0; return Number(m[1]+m[2]+m[3]); }
+function stripVol(p){ return String(p).replace(/\\VOLUME\{[^}]*\}/gi,""); }
+
+/* ---------- file IO via ActiveX (UTF-8 safe) ---------- */
+function readUtf8(path){
+  // ReadText(-1) on a large file is quadratic in MSHTML (30s for 16MB); read in 64KB chunks (~0.1s).
+  var st=new ActiveXObject("ADODB.Stream");
+  st.Type=2; st.Charset="utf-8"; st.Open(); st.LoadFromFile(path);
+  var parts=[]; while(!st.EOS){ parts.push(st.ReadText(65536)); } st.Close();
+  return parts.join("");
+}
+function writeUtf8(path,text){
+  var st=new ActiveXObject("ADODB.Stream");
+  st.Type=2; st.Charset="utf-8"; st.Open(); st.WriteText(text); st.SaveToFile(path,2); st.Close();
+}
+function uid(){ return new Date().getTime()+""+Math.floor(Math.random()*100000); }
+/* cmd expands %N / %VAR% inside .bat lines even within quotes — Velociraptor trees contain literal % (C%3A) */
+function batEsc(s){ return String(s).replace(/%/g,"%%"); }
+
+/* Run a batch script, wait, return {rc, log}. show=true → visible console window. */
+function runBat(lines, show){
+  var fso=new ActiveXObject("Scripting.FileSystemObject");
+  var sh=new ActiveXObject("WScript.Shell");
+  var tmp=fso.GetSpecialFolder(2)+"";
+  var stamp=uid();
+  var bat=tmp+"\\pecmd_"+stamp+".bat";
+  var logp=tmp+"\\pecmd_"+stamp+".log";
+  var f=fso.CreateTextFile(bat,true);
+  f.WriteLine("@echo off");
+  for(var i=0;i<lines.length;i++){ f.WriteLine(lines[i].replace(/__LOG__/g,logp)); }
+  f.Close();
+  var rc=sh.Run('cmd /c ""'+bat+'""', show?1:0, true);
+  var txt="";
+  try{ if(fso.FileExists(logp)) txt=readUtf8(logp); }catch(e){ txt="(could not read log: "+e.message+")"; }
+  try{ fso.DeleteFile(bat); }catch(e2){}
+  try{ if(fso.FileExists(logp)) fso.DeleteFile(logp); }catch(e3){}
+  return { rc:rc, log:txt };
+}
+
+/* Run a batch NON-blocking; writes a .done marker when finished. Caller polls with pollDone().
+   This keeps the HTA script responsive (no MSHTML long-running-script watchdog). */
+function runBatAsync(lines, show){
+  var fso=new ActiveXObject("Scripting.FileSystemObject");
+  var sh=new ActiveXObject("WScript.Shell");
+  var tmp=fso.GetSpecialFolder(2)+"";
+  var stamp=uid();
+  var bat=tmp+"\\pecmd_"+stamp+".bat";
+  var logp=tmp+"\\pecmd_"+stamp+".log";
+  var donep=tmp+"\\pecmd_"+stamp+".done";
+  var f=fso.CreateTextFile(bat,true);
+  f.WriteLine("@echo off");
+  for(var i=0;i<lines.length;i++){ f.WriteLine(lines[i].replace(/__LOG__/g,logp)); }
+  f.WriteLine('echo done> "'+donep+'"');   // marker written after everything above completes
+  f.Close();
+  sh.Run('cmd /c ""'+bat+'""', show?1:0, false);   // false = do NOT block the script
+  return { bat:bat, log:logp, done:donep, elapsed:0 };
+}
+function pollDone(ctx){
+  var fso=new ActiveXObject("Scripting.FileSystemObject");
+  if(fso.FileExists(ctx.done)){
+    var log=""; try{ if(fso.FileExists(ctx.log)) log=readUtf8(ctx.log); }catch(e){ log="(could not read log: "+e.message+")"; }
+    try{ fso.DeleteFile(ctx.bat); }catch(e1){}
+    try{ fso.DeleteFile(ctx.done); }catch(e2){}
+    try{ if(fso.FileExists(ctx.log)) fso.DeleteFile(ctx.log); }catch(e3){}
+    ctx.onDone(log);
+    return;
+  }
+  ctx.elapsed+=1;
+  if(ctx.elapsed>1800){ ctx.onTimeout&&ctx.onTimeout(); return; }   // 30-min safety cap
+  if(ctx.onTick) ctx.onTick(ctx.elapsed);
+  window.setTimeout(function(){ pollDone(ctx); }, 1000);
+}
+
+/* ---------- source-file filter (generic mode) ---------- */
+function distinctVals(arr){ var seen={}, out=[]; for(var i=0;i<arr.length;i++){ var v=arr[i]; if(v!=null && v!=="" && !seen[v]){ seen[v]=1; out.push(v); } } return out; }
+function shortPathN(p,n){ p=String(p); var parts=p.split("\\"); if(parts.length<=n) return p; return "…\\"+parts.slice(parts.length-n).join("\\"); }
+function shortPath(p){ return shortPathN(p,4); }
+function populateSourceFilter(vals){
+  var sel=$("srcSel"); sel.innerHTML="";
+  var o0=document.createElement("option"); o0.value=""; o0.text="all source files ("+vals.length+")"; sel.add(o0);
+  vals=vals.slice(0).sort();
+  for(var i=0;i<vals.length;i++){ var o=document.createElement("option"); o.value=vals[i]; o.text=shortPath(vals[i]); sel.add(o); }
+  SRCFILTER=""; sel.value="";
+  showEl("srcWrap", vals.length>1);
+}
+
+/* ---------- tooling: locate / version / download ---------- */
+function fileExists(p){ try{ return new ActiveXObject("Scripting.FileSystemObject").FileExists(p); }catch(e){ return false; } }
+function folderExists(p){ try{ return new ActiveXObject("Scripting.FileSystemObject").FolderExists(p); }catch(e){ return false; } }
+function parentDir(p){ var i=String(p).lastIndexOf("\\"); return i>=0?p.substring(0,i):p; }
+function htaFolder(){
+  try{ var cl=pecmdHta.commandLine+""; var m=cl.match(/"([^"]+\.hta)"/i); if(!m) m=cl.match(/([A-Za-z]:\\[^"]+\.hta)/i);
+    if(m) return parentDir(m[1]); }catch(e){}
+  try{ var p=decodeURIComponent(location.pathname+"").replace(/^\//,"").replace(/\//g,"\\"); return parentDir(p); }catch(e2){}
+  return "";
+}
+function resolveExe(){
+  var fso=new ActiveXObject("Scripting.FileSystemObject");
+  var dir=htaFolder(), cands=[];
+  if(dir) cands.push(dir+"\\PECmd.exe");
+  cands.push("C:\\ZimmermanTools\\net6\\PECmd.exe");   // prefer net6/net9 builds; the root net4 exe is console-fragile
+  cands.push("C:\\ZimmermanTools\\PECmd.exe");
+  for(var i=0;i<cands.length;i++){ if(fso.FileExists(cands[i])){ EXE=cands[i]; EXE_DIR=parentDir(cands[i]); return true; } }
+  EXE=""; EXE_DIR=dir||""; return false;
+}
+function checkDeps(){
+  // framework-dependent builds ship PECmd.dll + runtimeconfig next to the exe; self-contained net4 has neither
+  var fso=new ActiveXObject("Scripting.FileSystemObject"); var miss=[];
+  if(!EXE_DIR) return ["(install folder unknown)"];
+  if(fso.FileExists(EXE_DIR+"\\PECmd.runtimeconfig.json") && !fso.FileExists(EXE_DIR+"\\PECmd.dll")) miss.push("PECmd.dll");
+  return miss;
+}
+function verTuple(v){ var p=String(v).split("."); var a=[]; for(var i=0;i<p.length;i++) a.push(parseInt(p[i],10)||0); return a; }
+function verCmp(a,b){ a=verTuple(a); b=verTuple(b); var n=Math.max(a.length,b.length);
+  for(var i=0;i<n;i++){ var x=a[i]||0,y=b[i]||0; if(x!==y) return x<y?-1:1; } return 0; }
+function fetchLatest(){
+  LATEST_VER=KNOWN_LATEST_PECMD; WEB_OK=false;
+  try{
+    var x=new ActiveXObject("MSXML2.ServerXMLHTTP.6.0");
+    x.setTimeouts(2000,3000,4000,4000);
+    x.open("GET", PECMD_PAGE, false); x.send();
+    if(x.status===200){ WEB_OK=true; var t=x.responseText+""; var m=t.match(/PECmd[\s\S]{0,800}?(\d{4}\.\d+\.\d+)/i); if(m) LATEST_VER=m[1]; }
+  }catch(e){ WEB_OK=false; }
+  return LATEST_VER;
+}
+function updateVerPill(){
+  var s=LOCAL_VER?("PECmd v"+esc(LOCAL_VER)):"PECmd: not found";
+  if(!WEB_OK){ s+=" &middot; <span style='color:#8b949e'>no internet / no web source</span>"; }
+  else if(LATEST_VER){
+    if(LOCAL_VER && verCmp(LOCAL_VER,LATEST_VER)<0) s+=" &middot; <span style='color:#d29922'>update v"+esc(LATEST_VER)+" available</span>";
+    else if(LOCAL_VER) s+=" &middot; <span style='color:#3fb950'>latest</span>";
+    else s+=" &middot; latest v"+esc(LATEST_VER);
+  }
+  $("verpill").innerHTML=s;
+}
+function evaluateTooling(promptIfNeeded){
+  var dir=htaFolder();
+  var localComplete = dir ? fileExists(dir+"\\PECmd.exe") : false;   // exe next to the .hta (self-contained)
+  var found=resolveExe();
+  if(EXE) $("exeline").innerHTML="Tool: "+esc(EXE)+"  &middot;  run with DOTNET_ROLL_FORWARD=Major (covers .NET 9-target builds)";
+  else $("exeline").innerHTML='<span class="err">PECmd.exe not found next to this app ('+esc(dir||"app folder")+') or in C:\\ZimmermanTools</span>';
+  if(found) checkVersion(); else { LOCAL_VER=""; }
+  fetchLatest(); updateVerPill();
+  if(found){ var miss=checkDeps(); if(miss.length) setStatus("PECmd support files missing next to the exe: "+miss.join(", "),"err"); }
+  if(!promptIfNeeded) return;
+  if(localComplete){
+    // exe already next to the .hta → only prompt when the web says a newer version exists
+    if(WEB_OK && LOCAL_VER && verCmp(LOCAL_VER,LATEST_VER)<0){
+      if(confirm("A newer PECmd is available.\n\nNext to this app: v"+LOCAL_VER+"\nLatest online:   v"+LATEST_VER+"\n\nDownload the update next to the app now?")) downloadLatest();
+    }
+  } else {
+    if(WEB_OK){
+      var msg = (found ? ("PECmd is not set up next to this app (currently using "+EXE+").\n\n") : "PECmd.exe was not found.\n\n")
+        + "Download the latest (v"+LATEST_VER+") to a self-contained copy next to the app at:\n"+(dir||"?")+"\n\nProceed?";
+      if(confirm(msg)) downloadLatest();
+    } else if(found){
+      setStatus("Using local PECmd ("+EXE+") — no internet to reach Zimmerman Tools, so can't verify/download the latest.","muted");
+    } else {
+      setStatus("PECmd.exe not found next to this .hta and no internet to download it. Place PECmd.exe (net6/net9 build) next to this .hta.","err");
+    }
+  }
+}
+function downloadLatest(){
+  var target=htaFolder()||EXE_DIR;   // always install next to the .hta (self-contained)
+  if(!target){ setStatus("Cannot determine the app folder to install into","err"); return; }
+  if(!WEB_OK && !confirm("The Zimmerman Tools site did not respond earlier (no internet?).\n\nTry downloading PECmd from\n"+PECMD_ZIP_URL+"\ninto\n"+target+" anyway?")) return;
+  if(WEB_OK && !confirm("Download latest PECmd (v"+(LATEST_VER||KNOWN_LATEST_PECMD)+") from:\n"+PECMD_ZIP_URL+"\n\nInstall next to the app into:\n"+target+"\n\nProceed?")) return;
+  setStatus("Downloading & installing PECmd… (give it a moment)","muted");
+  var tq=String(target).replace(/'/g,"''");
+  var ps="$ErrorActionPreference='Stop';"
+    +"[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;"
+    +"$u='"+PECMD_ZIP_URL+"';"
+    +"$z=Join-Path $env:TEMP 'PECmd_dl.zip';"
+    +"$x=Join-Path $env:TEMP ('PECmd_x_'+[guid]::NewGuid().ToString('N'));"
+    +"Invoke-WebRequest -Uri $u -OutFile $z;"
+    +"Expand-Archive -Force -Path $z -DestinationPath $x;"
+    +"$exe=Get-ChildItem -Path $x -Recurse -Filter PECmd.exe | Select-Object -First 1;"
+    +"if(-not $exe){throw 'PECmd.exe not found in downloaded archive'};"
+    +"$src=Split-Path $exe.FullName;"
+    +"New-Item -ItemType Directory -Force -Path '"+tq+"' | Out-Null;"
+    +"Copy-Item -Path (Join-Path $src '*') -Destination '"+tq+"' -Recurse -Force;"
+    +"Remove-Item $z,$x -Recurse -Force -ErrorAction SilentlyContinue;"
+    +"Write-Output 'INSTALL_OK'";
+  try{
+    var r=runBat(['powershell -NoProfile -ExecutionPolicy Bypass -Command "'+ps+'" > "__LOG__" 2>&1']);
+    appendLog("--- PECmd download / install ---\n"+r.log);
+    if((r.log+"").indexOf("INSTALL_OK")>=0){ setStatus("PECmd installed to "+target,"ok"); evaluateTooling(false); }
+    else setStatus("Download/install failed — see log","err");
+  }catch(e){ setStatus("Download failed: "+e.message,"err"); }
+}
+
+/* ---------- actions ---------- */
+function checkVersion(){
+  if(!EXE || !fileExists(EXE)){ LOCAL_VER=""; updateVerPill(); setStatus("PECmd.exe not found — use 'Update / download PECmd'","err"); return; }
+  try{
+    var r=runBat([
+      "set DOTNET_ROLL_FORWARD=Major",
+      '"'+EXE+'" > "__LOG__" 2>&1'
+    ]);
+    var m=r.log.match(/PECmd version ([0-9.]+)/i);
+    if(m){ LOCAL_VER=m[1]; updateVerPill(); setStatus("PECmd v"+LOCAL_VER+" detected","ok"); }
+    else { LOCAL_VER=""; updateVerPill(); setStatus("Ran PECmd but could not parse version — see log","err"); appendLog(r.log); }
+  }catch(e){ LOCAL_VER=""; updateVerPill(); setStatus("Version check failed: "+e.message,"err"); }
+}
+
+/* can we actually enumerate this folder? (live C:\Windows\Prefetch is admin-only) */
+function canListFolder(p){
+  try{ var fso=new ActiveXObject("Scripting.FileSystemObject");
+    var e=new Enumerator(fso.GetFolder(p).Files); e.atEnd(); return true; }catch(err){ return false; }
+}
+
+function processPf(){
+  var inp=$("pfPath").value;
+  var outdir=$("outDir").value;
+  var inmode=$("inMode").value;   // "f" file, "d" directory
+  var fso=new ActiveXObject("Scripting.FileSystemObject");
+  if(inmode==="d"){
+    if(!inp||!fso.FolderExists(inp)){ setStatus("Directory not found: "+inp,"err"); return; }
+    if(!canListFolder(inp)){ setStatus("Access denied reading "+inp+" — the live Prefetch folder needs an ELEVATED run. Close this app and relaunch it as administrator (right-click → Run as administrator, or from an admin console: mshta.exe \""+(htaFolder()||"")+"\\PECmd-Wrapper.hta\").","err"); return; }
+  }
+  else { if(!inp||!fso.FileExists(inp)){ setStatus("File not found: "+inp,"err"); return; } }
+  if(!outdir){ setStatus("Set an output directory","err"); return; }
+  if(!EXE||!fileExists(EXE)){ setStatus("PECmd.exe not found — download it first","err"); return; }
+  var flag=(inmode==="d")?"-d":"-f";
+  var extra="";
+  if(inmode==="d" && $("optQuiet").checked) extra+=" -q";
+  if(inmode==="d" && $("optDedupe").checked) extra+=" --dedupe";
+  if($("optMp").checked) extra+=" --mp";
+  if($("optVss").checked) extra+=" --vss";
+  var before=csvNameSet(outdir);
+  if(BUSY){ setStatus("A PECmd run is already in progress — wait for it to finish.","err"); return; }
+  appendLog("Running: \""+EXE+"\" "+flag+" \""+inp+"\" --csv \""+outdir+"\""+extra
+    +"\nA console window shows progress; the app stays responsive and loads results automatically when done.");
+  BUSY=true; $("procBtn").disabled=true;
+  var binp=batEsc(inp), bout=batEsc(outdir);
+  var ctx=runBatAsync([
+    "set DOTNET_ROLL_FORWARD=Major",
+    'if not exist "'+bout+'" mkdir "'+bout+'"',
+    "echo PECmd is processing:",
+    'echo   '+binp,
+    "echo Output: "+bout,
+    "echo This window closes automatically when finished.",
+    "echo.",
+    '"'+batEsc(EXE)+'" '+flag+' "'+binp+'" --csv "'+bout+'"'+extra+' > "__LOG__" 2>&1'
+  ], true);
+  ctx.onTick=function(s){ setStatus("PECmd running… "+s+"s elapsed (app responsive; results load when done)","muted"); };
+  ctx.onTimeout=function(){ BUSY=false; $("procBtn").disabled=false; setStatus("PECmd still running after 30 min — stopped watching. Check the output folder / console window.","err"); };
+  ctx.onDone=function(log){ BUSY=false; $("procBtn").disabled=false; processPfDone(log,outdir,before); };
+  setStatus("PECmd starting…","muted");
+  window.setTimeout(function(){ pollDone(ctx); }, 1000);
+}
+function processPfDone(log,outdir,before){
+  appendLog("--- PECmd output ---\n"+log);
+  LASTOUTDIR=outdir;
+  var all=listCsvFiles(outdir);
+  var fresh=[]; for(var i=0;i<all.length;i++){ if(!before[all[i].name]) fresh.push(all[i]); }
+  if(!fresh.length){
+    // no new output — diagnose why, leniently (load nothing but explain)
+    if(/Unknown version/i.test(log))
+      setStatus("PECmd could not parse the prefetch format (\"Unknown version\") — the local PECmd is too old for these .pf files. Use 'Update / download PECmd'.","err");
+    else if(/denied|unauthorized/i.test(log))
+      setStatus("PECmd was denied access to the input — an elevated run is needed for the live Prefetch folder.","err");
+    else if(/Found 0 Prefetch files/i.test(log))
+      setStatus("PECmd found 0 prefetch files in that folder — check the 'Looking for prefetch files in …' line in the log matches the path you typed (and that the folder really holds .pf files).","err");
+    else
+      setStatus("PECmd produced no new CSV — no prefetch files found in the input, or every file failed to parse. See the log.","err");
+    populateProduced(all);
+    return;
+  }
+  var errs=(log.match(/Error opening/gi)||[]).length;
+  var errNote = errs ? (" — note: "+errs+" file(s) failed to parse (corrupt/sparse .pf; see log).") : "";
+  PRODUCED=fresh;
+  populateProduced(fresh);
+  // auto-load the main output (one row per prefetch file); Timeline stays available in the picker
+  var main=null;
+  for(var j=0;j<fresh.length;j++){ if(/_PECmd_Output\.csv$/i.test(fresh[j].name)){ if(!main||fresh[j].name>main.name) main=fresh[j]; } }
+  if(!main){ main=fresh[0]; for(var k=1;k<fresh.length;k++){ if(fresh[k].size>main.size) main=fresh[k]; } }
+  try{ $("producedSel").value=main.path; }catch(e){}
+  setStatus("Produced "+fresh.length+" CSV(s); loaded "+main.name+". Pick the Timeline from 'Produced CSVs'."+errNote,"ok");
+  loadCsvFile(main.path);
+}
+function csvNameSet(dir){ var o={}, l=listCsvFiles(dir); for(var i=0;i<l.length;i++) o[l[i].name]=true; return o; }
+function listCsvFiles(dir){
+  var fso=new ActiveXObject("Scripting.FileSystemObject"), out=[];
+  if(!fso.FolderExists(dir)) return out;
+  var e=new Enumerator(fso.GetFolder(dir).Files);
+  for(; !e.atEnd(); e.moveNext()){ var f=e.item(); if(/\.csv$/i.test(f.Name+"")) out.push({name:f.Name+"", path:f.Path+"", size:f.Size}); }
+  out.sort(function(a,b){ return a.name<b.name?1:(a.name>b.name?-1:0); });   // newest timestamp-prefix first
+  return out;
+}
+function fmtSize(n){ if(!n) return "0 B"; var u=["B","KB","MB","GB"], i=0; while(n>=1024&&i<u.length-1){n/=1024;i++;} return n.toFixed(i?1:0)+" "+u[i]; }
+function populateProduced(list){
+  var sel=$("producedSel"); sel.innerHTML="";
+  for(var i=0;i<list.length;i++){
+    var lab=list[i].name+"  ("+fmtSize(list[i].size)+")";
+    if(/_Timeline\.csv$/i.test(list[i].name)) lab+="  —  one row per execution event";
+    else if(/_PECmd_Output\.csv$/i.test(list[i].name)) lab+="  —  one row per prefetch file";
+    var o=document.createElement("option"); o.value=list[i].path; o.text=lab; sel.add(o);
+  }
+  showEl("producedRow", list.length>0);
+}
+function openDir(){ var d=$("outDir").value; if(!d){ setStatus("No output directory set","err"); return; }
+  try{ new ActiveXObject("WScript.Shell").Run('explorer.exe "'+d+'"',1,false); }catch(e){ setStatus("Could not open folder: "+e.message,"err"); } }
+
+/* ---------- CSV parser (RFC4180) — line-split hybrid: native split for the bulk,
+   careful field parsing only for lines containing quotes; merges rows split across
+   newlines inside quoted fields. Orders of magnitude faster than char-by-char in MSHTML. */
+function countQuotes(s){ var c=0, idx=-1; while((idx=s.indexOf('"',idx+1))>=0) c++; return c; }
+function parseCSVLine(line){
+  if(line.indexOf('"')<0) return line.split(",");   // fast path: no quotes → plain split
+  var out=[], field="", q=false, i=0, n=line.length;
+  while(i<n){ var c=line.charAt(i);
+    if(q){ if(c==='"'){ if(line.charAt(i+1)==='"'){ field+='"'; i+=2; continue; } q=false; i++; continue; } field+=c; i++; continue; }
+    if(c==='"'){ q=true; i++; continue; }
+    if(c===','){ out.push(field); field=""; i++; continue; }
+    field+=c; i++;
+  }
+  out.push(field); return out;
+}
+function parseCSV(text){
+  if(text.charCodeAt(0)===0xFEFF) text=text.substring(1);
+  var lines=text.split("\n"), rows=[], i=0, n=lines.length;
+  while(i<n){
+    var line=lines[i]; i++;
+    // a quoted field may contain a newline → merge continuation lines until quotes balance
+    var qc=countQuotes(line);
+    while((qc%2)===1 && i<n){ line+="\n"+lines[i]; qc+=countQuotes(lines[i]); i++; }
+    if(line.charAt(line.length-1)==='\r') line=line.substring(0,line.length-1);
+    if(line==="") continue;
+    rows.push(parseCSVLine(line));
+  }
+  return rows;
+}
+
+/* ---------- ingest dispatch ---------- */
+function loadCsvFile(path){
+  try{
+    var text=readUtf8(path);
+    var raw=parseCSV(text);
+    if(!raw||!raw.length){ setStatus("Empty / unparseable CSV","err"); return; }
+    var idx={}, head=raw[0];
+    for(var h=0;h<head.length;h++) idx[trimStr(head[h])]=h;
+    if(("ExecutableName" in idx) && ("SourceFilename" in idx) && ("RunCount" in idx) && ("LastRun" in idx))
+      ingestPf(raw, idx, baseName(path));
+    else
+      ingestGeneric(raw, head, baseName(path));
+  }catch(e){ setStatus("Could not read CSV: "+e.message,"err"); }
+}
+function cell(rw,i){ return (i>=0&&i<rw.length)?rw[i]:""; }
+function numv(v){ var x=parseFloat(v); return isFinite(x)?x:0; }
+
+/* ---------- prefetch ingest (spec §6) ---------- */
+function splitList(raw){
+  if(!raw) return [];
+  var a=raw.split(/, (?=\\VOLUME\{)/i);          // entries are ", "-joined and each starts with \VOLUME{...}
+  if(a.length===1 && raw.indexOf(", ")>=0) a=raw.split(", ");
+  return a;
+}
+function ingestPf(raw, idx, srcLabel){
+  function gi(n){ return (n in idx)?idx[n]:-1; }
+  var iNote=gi("Note"), iSrc=gi("SourceFilename"), iSC=gi("SourceCreated"), iSM=gi("SourceModified"),
+      iExe=gi("ExecutableName"), iHash=gi("Hash"), iSize=gi("Size"), iVer=gi("Version"),
+      iRC=gi("RunCount"), iLR=gi("LastRun"), iDirs=gi("Directories"), iFL=gi("FilesLoaded"), iPE=gi("ParsingError");
+  var iPR=[], p;
+  for(p=0;p<7;p++) iPR.push(gi("PreviousRun"+p));
+  var iVol=[];
+  for(p=0;p<2;p++) iVol.push([gi("Volume"+p+"Name"), gi("Volume"+p+"Serial"), gi("Volume"+p+"Created")]);
+  ROWS=[];
+  for(var r=1;r<raw.length;r++){
+    var rw=raw[r]; if(rw.length<3) continue;
+    var exe=trimStr(cell(rw,iExe)); if(!exe) continue;
+    var lastRun=cell(rw,iLR);
+    var runs=[]; if(lastRun) runs.push(lastRun);
+    for(p=0;p<7;p++){ var pr=cell(rw,iPR[p]); if(pr) runs.push(pr); }
+    var vols=[];
+    for(p=0;p<2;p++){ var vn=cell(rw,iVol[p][0]); if(vn) vols.push({name:vn, serial:cell(rw,iVol[p][1]), created:cell(rw,iVol[p][2])}); }
+    var rawDirs=cell(rw,iDirs), rawFiles=cell(rw,iFL);
+    var files=splitList(rawFiles);
+    // derive the executable's own run path: the FilesLoaded entry whose basename matches ExecutableName
+    var runPath="", exeU=exe.toUpperCase();
+    for(var f=0;f<files.length;f++){ var fn=files[f];
+      if(baseName(fn).toUpperCase()===exeU){ runPath=fn; break; } }
+    var runPathDisp=stripVol(runPath);
+    var rec={
+      exe:exe, exeL:exe.toLowerCase(),
+      hash:cell(rw,iHash), src:cell(rw,iSrc), srcCreated:cell(rw,iSC), srcModified:cell(rw,iSM),
+      size:numv(cell(rw,iSize)), ver:cell(rw,iVer),
+      runCount:numv(cell(rw,iRC)), lastRun:lastRun, runs:runs,
+      rawDirs:rawDirs, rawFiles:rawFiles, files:files, vols:vols,
+      note:cell(rw,iNote), parseErr:/^true$/i.test(trimStr(cell(rw,iPE))),
+      runPath:runPath, runPathDisp:runPathDisp, runPathL:runPathDisp.toLowerCase(),
+      msLast:msOf(lastRun), dayLast:dayOf(lastRun), msCreated:msOf(cell(rw,iSC)),
+      tags:[], reasons:[], score:0, sus:false, recent:false, multi:false
+    };
+    rec.filesDirsL=(stripVol(rawDirs)+" "+stripVol(rawFiles)).toLowerCase();
+    rec.blob=(exe+" "+runPathDisp+" "+rec.hash+" "+rec.src+" "+rec.ver+" "+rec.note).toLowerCase();
+    ROWS.push(rec);
+  }
+  if(!ROWS.length){ ingestGeneric(raw, raw[0], srcLabel); return; }
+  // flatten every recorded run into the timeline event list (mirrors PECmd's *_Timeline.csv)
+  EVENTS=[];
+  for(var e=0;e<ROWS.length;e++){ var er=ROWS[e];
+    for(var w=0;w<er.runs.length;w++){ var ts=er.runs[w];
+      EVENTS.push({t:ts, ms:msOf(ts), day:dayOf(ts), which:w, rec:er}); } }
+  rescoreAll();
+  setMode("pf");
+  populateSourceFilter([]);
+  $("results").className="";
+  $("srcpill").innerHTML=nf(ROWS.length)+" prefetch files &middot; "+nf(EVENTS.length)+" executions &middot; "+esc(srcLabel);
+  QUERY=""; $("q").value=""; DFROM=0; DTO=0; $("dfrom").value=""; $("dto").value="";
+  CURCAT="all"; highlightCat();
+  SORTKEY=4; SORTDIR=-1; TSORTKEY=1; TSORTDIR=-1;
+  setView("exec", true);
+  closeDetail();
+  setStatus("Loaded "+nf(ROWS.length)+" prefetch records ("+nf(EVENTS.length)+" recorded executions)","ok");
+  render();
+}
+
+/* ---------- suspicion scoring (spec §7, H1–H8) ---------- */
+function exeBase(nameL){ return nameL.replace(/\.(exe|com|scr|bat|cmd)$/,""); }
+function isUserPath(pL){ if(!pL) return false;
+  if(pL.indexOf("\\programdata\\microsoft\\windows defender\\")>=0) return false;   // Defender platform updates live here — chronic FP
+  for(var i=0;i<USERPATHS.length;i++){ if(pL.indexOf(USERPATHS[i])>=0) return true; } return false; }
+function looksRandom(nameL){
+  // tuned on real-world datasets: 5-consonant windows flag real names (MPCMDRUN), <=2-char names are covered by the LOLBIN list
+  var nm=exeBase(nameL).replace(/[^a-z0-9]/g,"");
+  if(/^[0-9a-f]{10,}$/.test(nm)) return true;                       // long pure-hex name
+  if(nm.length>=10){                                                // a 6-consonant run in a long name
+    for(var i=0;i+6<=nm.length;i++){ if(/^[bcdfghjklmnpqrstvwxz]{6}$/.test(nm.substr(i,6))) return true; }
+  }
+  return false;
+}
+function rescoreAll(){
+  var i, rec;
+  // dataset anchors: "recent" is relative to the newest LastRun in the dataset (collections are analyzed later)
+  var maxMs=0;
+  for(i=0;i<ROWS.length;i++){ if(ROWS[i].msLast>maxMs) maxMs=ROWS[i].msLast; }
+  var recentCut=maxMs?(maxMs-RECENT_DAYS*86400000):0;
+  // masquerade pass: same exe name from >1 distinct path AND a system/user-writable MIX (version segments
+  // neutralized). Requiring the mix kills the WebView2/updater noise (many legit copies under Program Files)
+  // while keeping the real signal: an OS/app name that also runs from AppData/Temp.
+  var byExe={};
+  for(i=0;i<ROWS.length;i++){ rec=ROWS[i];
+    if(!rec.runPathL) continue;
+    var o=byExe[rec.exeL]; if(!o) o=byExe[rec.exeL]={paths:{},user:false,sys:false};
+    o.paths[normVerPath(rec.runPathL)]=1;
+    if(isUserPath(rec.runPathL)) o.user=true; else o.sys=true;
+  }
+  for(i=0;i<ROWS.length;i++){ rec=ROWS[i];
+    var n=0, k, o2=byExe[rec.exeL];
+    if(o2){ for(k in o2.paths){ if(o2.paths.hasOwnProperty(k)) n++; } }
+    rec.multi=(n>1 && o2.user && o2.sys);
+  }
+  for(i=0;i<ROWS.length;i++){ scoreRec(ROWS[i], recentCut); }
+}
+function normVerPath(pL){
+  var parts=pL.split("\\"), out=[];
+  for(var i=0;i<parts.length;i++){ out.push(/^(app-)?[\d.\-_]+$/.test(parts[i])?"#":parts[i]); }
+  return out.join("\\");
+}
+function scoreRec(rec, recentCut){
+  var tags=[], reasons=[], score=0;
+  var base=exeBase(rec.exeL);
+  var h1=isUserPath(rec.runPathL);
+  rec.recent=(recentCut && rec.msLast>=recentCut);
+  if(h1){ score+=2; tags.push("USERPATH"); reasons.push("Runs from a user-writable path: "+rec.runPathDisp); }
+  if(LOLBINS[base]){ score+=1; tags.push("LOLBIN"); reasons.push("LOLBIN / dual-use executable ("+rec.exe+")");
+    if(h1){ score+=1; reasons.push("LOLBIN running from a user-writable path"); } }
+  if(rec.runCount<=2 && rec.recent){ tags.push("RARE"); reasons.push("Rare + recent: run count "+rec.runCount+", last run "+rec.lastRun); }   // triage filter, no score — too common to alarm on
+  if(looksRandom(rec.exeL)){ score+=1; tags.push("RANDOM"); reasons.push("Random-looking executable name"); }
+  if(rec.multi){ score+=1; tags.push("MULTI-PATH"); reasons.push("Same executable name runs from BOTH system and user-writable paths on this host"); }
+  if(OSNAMES[base] && rec.runPathL && rec.runPathL.indexOf("\\windows\\")<0){
+    score+=3; tags.push("MASQ"); reasons.push("OS-binary name running OUTSIDE \\Windows\\: "+rec.runPathDisp); }
+  if(IOCS.length){
+    var hits=[], t;
+    for(t=0;t<IOCS.length;t++){ var term=IOCS[t];
+      if(rec.blob.indexOf(term)>=0 || rec.filesDirsL.indexOf(term)>=0){ hits.push(term); if(hits.length>=3) break; } }
+    if(hits.length){ score+=3; tags.push("IOC"); reasons.push("IOC/keyword hit: "+hits.join(", ")); }
+  }
+  if(rec.runPathL && (rec.runPathL.indexOf("\\windows\\")===0 || rec.runPathL.indexOf("\\program files")===0)){
+    // temp-dir DLLs only — plugin/JIT DLLs anywhere under \Users\ are routine for legit apps
+    var m=rec.filesDirsL.match(/[^,]*\\(windows\\temp|systemtemp|appdata\\local\\temp|downloads|perflogs)\\[^,]*\.dll/);
+    if(m){ score+=1; tags.push("USERDLL"); reasons.push("System/Program Files binary loads a DLL from a temp path: …"+trimStr(m[0]).substring(Math.max(0,trimStr(m[0]).length-80))); }
+  }
+  rec.tags=tags; rec.reasons=reasons; rec.score=score; rec.sus=(score>=2);
+}
+
+/* ---------- pf aggregates / overview ---------- */
+function topList(obj,n){ var a=[],k; for(k in obj){ if(obj.hasOwnProperty(k)) a.push([k,obj[k]]); }
+  a.sort(function(x,y){ return y[1]-x[1]; }); return a.slice(0,n); }
+function stat(n,l){ return '<span class="stat"><span class="n">'+esc(n)+'</span><span class="l">'+esc(l)+'</span></span>'; }
+function bar(label,frac,val,q){
+  var lc=q?' lnk" data-q="'+esc(q):'';
+  return '<div class="brow"><span class="blab'+lc+'" title="'+esc(label)+'">'+esc(label)+'</span>'
+    +'<span class="btrack"><span class="bfill" style="width:'+(frac*100).toFixed(1)+'%"></span></span>'
+    +'<span class="bval">'+esc(val)+'</span></div>';
+}
+function listRow(label,val,q,cls){
+  var lc=q?' lnk" data-q="'+esc(q):'';
+  return '<div class="brow"><span class="blab'+lc+'" title="'+esc(label)+'" style="width:52%">'+esc(label)+'</span>'
+    +'<span class="bval" style="width:44%;'+(cls||"")+'">'+esc(val)+'</span></div>';
+}
+function fmtShortTs(s){ var m=String(s).match(/^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})/); return m?(m[1]+" "+m[2]):String(s); }
+function renderPfAgg(rows){
+  var i, r;
+  var exes={}, exeRuns={}, susN=0, iocN=0, errN=0, totRuns=0, minMs=0, maxMs=0;
+  for(i=0;i<rows.length;i++){ r=rows[i];
+    exes[r.exeL]=1;
+    exeRuns[r.exe]=(exeRuns[r.exe]||0)+r.runCount;
+    totRuns+=r.runCount;
+    if(r.sus) susN++;
+    if(hasTag(r,"IOC")) iocN++;
+    if(r.parseErr||r.note) errN++;
+    if(r.msLast){ if(!minMs||r.msLast<minMs) minMs=r.msLast; if(r.msLast>maxMs) maxMs=r.msLast; }
+  }
+  var distinct=0,k; for(k in exes){ if(exes.hasOwnProperty(k)) distinct++; }
+  var rng=(minMs? (fmtShortTs(msToTs(minMs))+" → "+fmtShortTs(msToTs(maxMs))) : "—");
+  $("statbar").innerHTML=
+    stat(nf(rows.length),"prefetch files")+stat(nf(distinct),"executables")+stat(nf(totRuns),"total runs")+
+    stat(nf(susN),"suspicious")+(IOCS.length?stat(nf(iocN),"IOC hits"):"")+(errN?stat(nf(errN),"notes/errors"):"")+
+    '<span class="stat" style="min-width:260px"><span class="n" style="font-size:12px">'+esc(rng)+'</span><span class="l">LastRun range (UTC)</span></span>';
+  // col 1: top executables by run count
+  var top=topList(exeRuns,12), h="", max=top.length?top[0][1]:1;
+  for(i=0;i<top.length;i++){ h+=bar(top[i][0], max?top[i][1]/max:0, nf(top[i][1]), top[i][0]); }
+  $("topExes").innerHTML=h||'<span class="muted">none</span>';
+  // col 2: newest first-seen (.pf SourceCreated)
+  var byNew=rows.slice(0); byNew.sort(function(a,b){ return b.msCreated-a.msCreated; });
+  h=""; for(i=0;i<byNew.length&&i<12;i++){ r=byNew[i]; h+=listRow(r.exe, fmtShortTs(r.srcCreated), r.exe); }
+  $("topNew").innerHTML=h||'<span class="muted">none</span>';
+  // col 3: suspicious, score-ranked
+  var sus=[]; for(i=0;i<rows.length;i++){ if(rows[i].sus) sus.push(rows[i]); }
+  sus.sort(function(a,b){ return b.score-a.score || b.msLast-a.msLast; });
+  h=""; for(i=0;i<sus.length&&i<12;i++){ r=sus[i];
+    h+=listRow(r.exe+"  ["+r.tags.join(",")+"]", "score "+r.score, r.exe, "color:#ff6b6b"); }
+  $("topSus").innerHTML=h||'<span class="ok">No suspicious executables</span>';
+}
+function msToTs(ms){ var d=new Date(ms); function p(x){return (x<10?"0":"")+x;}
+  return d.getUTCFullYear()+"-"+p(d.getUTCMonth()+1)+"-"+p(d.getUTCDate())+" "+p(d.getUTCHours())+":"+p(d.getUTCMinutes())+":"+p(d.getUTCSeconds()); }
+function hasTag(r,t){ for(var i=0;i<r.tags.length;i++){ if(r.tags[i]===t) return true; } return false; }
+
+/* ---------- pf table ---------- */
+var COLS=[
+  {h:"Tags", sk:function(r){return -r.score;}, cell:function(r){return '<td class="first">'+tagHtml(r)+'</td>';}},
+  {h:"Executable", sk:function(r){return r.exeL;}, cell:function(r){return '<td class="mono lnk" data-q="'+esc(r.exe)+'" title="'+esc(r.exe)+'">'+esc(r.exe)+'</td>';}},
+  {h:"Run path", sk:function(r){return r.runPathL;}, cell:function(r){return '<td class="mono" title="'+esc(r.runPathDisp)+'">'+esc(r.runPathDisp)+'</td>';}},
+  {h:"Runs", sk:function(r){return r.runCount;}, cell:function(r){return '<td class="mono" style="text-align:right">'+esc(r.runCount)+'</td>';}},
+  {h:"LastRun (UTC)", sk:function(r){return r.msLast;}, cell:function(r){return '<td class="mono">'+esc(r.lastRun)+'</td>';}},
+  {h:"First seen (UTC)", sk:function(r){return r.msCreated;}, cell:function(r){return '<td class="mono" title=".pf created — approximates first execution">'+esc(r.srcCreated)+'</td>';}},
+  {h:"Hash", sk:function(r){return r.hash;}, cell:function(r){return '<td class="mono muted">'+esc(r.hash)+'</td>';}},
+  {h:"Size", sk:function(r){return r.size;}, cell:function(r){return '<td class="mono" style="text-align:right">'+esc(nf(r.size))+'</td>';}},
+  {h:"Source .pf", sk:function(r){return r.src.toLowerCase();}, cell:function(r){return '<td class="mono muted" title="'+esc(r.src)+'">'+esc(shortPathN(r.src,2))+'</td>';}},
+  {h:"Note", sk:function(r){return (r.note||(r.parseErr?"parse error":"")).toLowerCase();}, cell:function(r){var t=r.note||(r.parseErr?"parse error":""); return '<td class="muted" title="'+esc(t)+'">'+esc(t)+'</td>';}}
+];
+function tagHtml(r){
+  var t="",i;
+  if(r.sus) t+='<span class="tag sus" title="'+esc(r.reasons.join("; "))+'">SUS '+r.score+'</span>';
+  for(i=0;i<r.tags.length;i++){ var g=r.tags[i], cls="gen";
+    if(g==="USERPATH") cls="usr"; else if(g==="LOLBIN") cls="lol"; else if(g==="RARE"||g==="RANDOM") cls="rare";
+    else if(g==="IOC"||g==="MASQ") cls="ioc";
+    t+='<span class="tag '+cls+'" title="'+esc(r.reasons.join("; "))+'">'+esc(g)+'</span>'; }
+  return t;
+}
+function filteredPf(){
+  var out=[];
+  for(var i=0;i<ROWS.length;i++){
+    var r=ROWS[i];
+    if(CURCAT==="sus"&&!r.sus) continue;
+    if(CURCAT==="userpath"&&!hasTag(r,"USERPATH")) continue;
+    if(CURCAT==="lolbin"&&!hasTag(r,"LOLBIN")) continue;
+    if(CURCAT==="rare"&&!hasTag(r,"RARE")) continue;
+    if(CURCAT==="recent"&&!r.recent) continue;
+    if(CURCAT==="ioc"&&!hasTag(r,"IOC")) continue;
+    if(DFROM&&(!r.dayLast||r.dayLast<DFROM)) continue;
+    if(DTO&&(!r.dayLast||r.dayLast>DTO)) continue;
+    if(QUERY){ if(r.blob.indexOf(QUERY)<0 && r.filesDirsL.indexOf(QUERY)<0) continue; }
+    out.push(r);
+  }
+  return out;
+}
+function updateCatCounts(){
+  var c={all:ROWS.length,sus:0,userpath:0,lolbin:0,rare:0,recent:0,ioc:0};
+  for(var i=0;i<ROWS.length;i++){ var r=ROWS[i];
+    if(r.sus)c.sus++; if(hasTag(r,"USERPATH"))c.userpath++; if(hasTag(r,"LOLBIN"))c.lolbin++;
+    if(hasTag(r,"RARE"))c.rare++; if(r.recent)c.recent++; if(hasTag(r,"IOC"))c.ioc++; }
+  var names={all:"All",sus:"Suspicious",userpath:"User-path",lolbin:"LOLBIN",rare:"Rare",recent:"Recent",ioc:"IOC hits"};
+  var bs=$("pfCats").getElementsByTagName("button");
+  for(var j=0;j<bs.length;j++){ var k=bs[j].getAttribute("data-cat");
+    if(k) bs[j].innerHTML=names[k]+" ("+nf(c[k])+")"; }
+}
+function highlightCat(){
+  var bs=$("pfCats").getElementsByTagName("button");
+  for(var j=0;j<bs.length;j++){ if(bs[j].getAttribute("data-cat")) bs[j].className=(bs[j].getAttribute("data-cat")===CURCAT)?"btn on":"btn"; }
+}
+function setView(v, quiet){
+  VIEW=v;
+  $("vExec").className=(v==="exec")?"btn on":"btn";
+  $("vTime").className=(v==="time")?"btn on":"btn";
+  $("tableTitle").innerHTML=(v==="time")?"Execution timeline":"Prefetch executables";
+  if(!quiet) render();
+}
+function render(){
+  if(MODE==="generic"){ renderGeneric(); return; }
+  if(VIEW==="time"){ renderTime(); return; }
+  if(!ROWS.length) return;
+  var rows=filteredPf();
+  renderPfAgg(rows);
+  updateCatCounts();
+  var sk=COLS[SORTKEY].sk, dir=SORTDIR;
+  rows.sort(function(a,b){ var x=sk(a),y=sk(b);
+    if(typeof x==="number"&&typeof y==="number") return (x-y)*dir;
+    x=String(x); y=String(y); return x<y?-dir:(x>y?dir:0); });
+  var shown=rows.length>MAXROWS?MAXROWS:rows.length;
+  var html="<thead><tr>";
+  for(var c=0;c<COLS.length;c++){
+    var arrow=(SORTKEY===c)?(SORTDIR>0?" ▲":" ▼"):"";
+    html+='<th data-k="'+c+'">'+esc(COLS[c].h)+arrow+'</th>';
+  }
+  html+="</tr></thead><tbody>";
+  for(var i=0;i<shown;i++){
+    var r=rows[i];
+    html+='<tr data-i="'+i+'"'+(r.sus?' class="sus"':'')+' style="cursor:pointer">';
+    for(var k=0;k<COLS.length;k++){ html+=COLS[k].cell(r); }
+    html+="</tr>";
+  }
+  html+="</tbody>";
+  $("tbl").innerHTML=html;
+  $("count").innerHTML=nf(rows.length)+" rows"+(shown<rows.length?(" (showing "+nf(shown)+")"):"");
+  wireHeaders();
+  applyFreeze();
+  window.__viewRows=rows;
+}
+function wireHeaders(){
+  var ths=$("tbl").getElementsByTagName("th");
+  for(var i=0;i<ths.length;i++){ ths[i].onclick=function(){
+    var k=parseInt(this.getAttribute("data-k"),10);
+    if(SORTKEY===k) SORTDIR*=-1; else { SORTKEY=k; SORTDIR=1; }
+    render();
+  }; }
+}
+function applyFreeze(){
+  var sc=$("tblScroll"); if(!sc) return;
+  var ths=$("tbl").getElementsByTagName("th"); var y=sc.scrollTop;
+  for(var i=0;i<ths.length;i++){ ths[i].style.top=y+"px"; }
+}
+
+/* ---------- timeline view (one row per recorded execution) ---------- */
+var TCOLS=[
+  {h:"Tags", sk:function(ev){return -ev.rec.score;}, cell:function(ev){return '<td class="first">'+tagHtml(ev.rec)+'</td>';}},
+  {h:"RunTime (UTC)", sk:function(ev){return ev.ms;}, cell:function(ev){return '<td class="mono">'+esc(ev.t)+'</td>';}},
+  {h:"Executable", sk:function(ev){return ev.rec.exeL;}, cell:function(ev){return '<td class="mono lnk" data-q="'+esc(ev.rec.exe)+'" title="'+esc(ev.rec.exe)+'">'+esc(ev.rec.exe)+'</td>';}},
+  {h:"Run path", sk:function(ev){return ev.rec.runPathL;}, cell:function(ev){return '<td class="mono" title="'+esc(ev.rec.runPathDisp)+'">'+esc(ev.rec.runPathDisp)+'</td>';}},
+  {h:"Which", sk:function(ev){return ev.which;}, cell:function(ev){return '<td class="muted">'+(ev.which===0?"last run":("prev "+ev.which))+'</td>';}},
+  {h:"Runs", sk:function(ev){return ev.rec.runCount;}, cell:function(ev){return '<td class="mono" style="text-align:right">'+esc(ev.rec.runCount)+'</td>';}},
+  {h:"Source .pf", sk:function(ev){return ev.rec.src.toLowerCase();}, cell:function(ev){return '<td class="mono muted" title="'+esc(ev.rec.src)+'">'+esc(shortPathN(ev.rec.src,2))+'</td>';}}
+];
+function evPass(r){
+  if(CURCAT==="sus"&&!r.sus) return false;
+  if(CURCAT==="userpath"&&!hasTag(r,"USERPATH")) return false;
+  if(CURCAT==="lolbin"&&!hasTag(r,"LOLBIN")) return false;
+  if(CURCAT==="rare"&&!hasTag(r,"RARE")) return false;
+  if(CURCAT==="recent"&&!r.recent) return false;
+  if(CURCAT==="ioc"&&!hasTag(r,"IOC")) return false;
+  if(QUERY){ if(r.blob.indexOf(QUERY)<0 && r.filesDirsL.indexOf(QUERY)<0) return false; }
+  return true;
+}
+function filteredTime(){
+  var out=[];
+  for(var i=0;i<EVENTS.length;i++){
+    var ev=EVENTS[i];
+    if(DFROM&&(!ev.day||ev.day<DFROM)) continue;
+    if(DTO&&(!ev.day||ev.day>DTO)) continue;
+    if(!evPass(ev.rec)) continue;
+    out.push(ev);
+  }
+  return out;
+}
+function renderTimeAgg(evs){
+  var i, ev, tok={};   // per-render marker to walk distinct records without ids
+  var recs=[], sus=0, ioc=0, exes={}, minMs=0, maxMs=0, exeEv={};
+  for(i=0;i<evs.length;i++){ ev=evs[i];
+    if(ev.rec.__tok!==tok){ ev.rec.__tok=tok; recs.push(ev.rec); }
+    exes[ev.rec.exeL]=1; exeEv[ev.rec.exe]=(exeEv[ev.rec.exe]||0)+1;
+    if(ev.rec.sus) sus++;
+    if(hasTag(ev.rec,"IOC")) ioc++;
+    if(ev.ms){ if(!minMs||ev.ms<minMs) minMs=ev.ms; if(ev.ms>maxMs) maxMs=ev.ms; }
+  }
+  var distinct=0,k; for(k in exes){ if(exes.hasOwnProperty(k)) distinct++; }
+  var rng=(minMs? (fmtShortTs(msToTs(minMs))+" → "+fmtShortTs(msToTs(maxMs))) : "—");
+  $("statbar").innerHTML=
+    stat(nf(evs.length),"executions")+stat(nf(recs.length),"prefetch files")+stat(nf(distinct),"executables")+
+    stat(nf(sus),"suspicious execs")+(IOCS.length?stat(nf(ioc),"IOC-hit execs"):"")+
+    '<span class="stat" style="min-width:260px"><span class="n" style="font-size:12px">'+esc(rng)+'</span><span class="l">RunTime range (UTC)</span></span>';
+  // col 1: busiest executables in the filtered window (by recorded executions, not lifetime RunCount)
+  var top=topList(exeEv,12), h="", max=top.length?top[0][1]:1;
+  for(i=0;i<top.length;i++){ h+=bar(top[i][0], max?top[i][1]/max:0, nf(top[i][1]), top[i][0]); }
+  $("topExes").innerHTML=h||'<span class="muted">none</span>';
+  // col 2: newest first-seen among the visible records
+  var byNew=recs.slice(0); byNew.sort(function(a,b){ return b.msCreated-a.msCreated; });
+  h=""; for(i=0;i<byNew.length&&i<12;i++){ var r=byNew[i]; h+=listRow(r.exe, fmtShortTs(r.srcCreated), r.exe); }
+  $("topNew").innerHTML=h||'<span class="muted">none</span>';
+  // col 3: suspicious among the visible records
+  var s2=[]; for(i=0;i<recs.length;i++){ if(recs[i].sus) s2.push(recs[i]); }
+  s2.sort(function(a,b){ return b.score-a.score || b.msLast-a.msLast; });
+  h=""; for(i=0;i<s2.length&&i<12;i++){ var r2=s2[i];
+    h+=listRow(r2.exe+"  ["+r2.tags.join(",")+"]", "score "+r2.score, r2.exe, "color:#ff6b6b"); }
+  $("topSus").innerHTML=h||'<span class="ok">No suspicious executables</span>';
+}
+function renderTime(){
+  if(!EVENTS.length) return;
+  var evs=filteredTime();
+  renderTimeAgg(evs);
+  updateCatCounts();
+  var sk=TCOLS[TSORTKEY].sk, dir=TSORTDIR;
+  evs.sort(function(a,b){ var x=sk(a),y=sk(b);
+    if(typeof x==="number"&&typeof y==="number") return (x-y)*dir;
+    x=String(x); y=String(y); return x<y?-dir:(x>y?dir:0); });
+  var shown=evs.length>MAXROWS?MAXROWS:evs.length;
+  var html="<thead><tr>";
+  for(var c=0;c<TCOLS.length;c++){
+    var arrow=(TSORTKEY===c)?(TSORTDIR>0?" ▲":" ▼"):"";
+    html+='<th data-k="'+c+'">'+esc(TCOLS[c].h)+arrow+'</th>';
+  }
+  html+="</tr></thead><tbody>";
+  for(var i=0;i<shown;i++){
+    var ev=evs[i];
+    html+='<tr data-i="'+i+'"'+(ev.rec.sus?' class="sus"':'')+' style="cursor:pointer">';
+    for(var k=0;k<TCOLS.length;k++){ html+=TCOLS[k].cell(ev); }
+    html+="</tr>";
+  }
+  html+="</tbody>";
+  $("tbl").innerHTML=html;
+  $("count").innerHTML=nf(evs.length)+" executions"+(shown<evs.length?(" (showing "+nf(shown)+")"):"");
+  var ths=$("tbl").getElementsByTagName("th");
+  for(var j=0;j<ths.length;j++){ ths[j].onclick=function(){
+    var kk=parseInt(this.getAttribute("data-k"),10);
+    if(TSORTKEY===kk) TSORTDIR*=-1; else { TSORTKEY=kk; TSORTDIR=1; }
+    renderTime();
+  }; }
+  applyFreeze();
+  window.__viewRows=evs;
+}
+
+/* ---------- detail pane ---------- */
+function hlClassFor(entryL){
+  for(var t=0;t<IOCS.length;t++){ if(entryL.indexOf(IOCS[t])>=0) return "hl-ioc"; }
+  if(isUserPath(entryL)) return "hl-user";
+  return "";
+}
+function renderDetail(rec){
+  DETREC=rec;
+  var h='<div class="mono" style="font-size:14px;margin-bottom:6px"><b>'+esc(rec.exe)+'</b>'
+    +(rec.runPathDisp?('  <span class="muted">—</span>  '+esc(rec.runPathDisp)):'  <span class="muted">— run path not present in FilesLoaded</span>')+'</div>';
+  h+='<div style="margin-bottom:6px">'+tagHtml(rec)+'</div>';
+  if(rec.reasons.length){ h+='<div style="font-size:12px;color:#ff9b9b;margin-bottom:6px">';
+    for(var q=0;q<rec.reasons.length;q++) h+="&bull; "+esc(rec.reasons[q])+"<br>"; h+='</div>'; }
+  h+='<div class="mono muted" style="font-size:11px;margin-bottom:8px">'
+    +'hash '+esc(rec.hash)+' &middot; '+esc(nf(rec.size))+' bytes &middot; '+esc(rec.ver)
+    +' &middot; .pf created '+esc(rec.srcCreated)+' (UTC) &middot; modified '+esc(rec.srcModified)+' (UTC)'
+    +(rec.note?(' &middot; note: '+esc(rec.note)):'')+(rec.parseErr?' &middot; <span class="err">PARSING ERROR</span>':'')
+    +'<br>'+esc(rec.src)+'</div>';
+  h+='<h3>Executions ('+rec.runs.length+' recorded &middot; run count '+esc(rec.runCount)+') — UTC</h3><div class="dl" style="max-height:120px">';
+  for(var i=0;i<rec.runs.length;i++){ h+='<div class="mono">'+esc(rec.runs[i])+(i===0?'  <span class="muted">(last run)</span>':'')+'</div>'; }
+  h+='</div>';
+  if(rec.vols.length){ h+='<h3>Volumes</h3><div class="dl" style="max-height:70px">';
+    for(i=0;i<rec.vols.length;i++){ var v=rec.vols[i];
+      h+='<div class="mono">'+esc(v.name)+'  serial '+esc(v.serial)+'  created '+esc(v.created)+' (UTC)</div>'; }
+    h+='</div>'; }
+  var dirs=splitList(rec.rawDirs);
+  h+='<h3>Directories referenced ('+dirs.length+')</h3><div class="dl">';
+  for(i=0;i<dirs.length;i++){ var dd=stripVol(dirs[i]); var dc=hlClassFor(dd.toLowerCase());
+    h+='<div class="mono'+(dc?(" "+dc):"")+'" title="'+esc(dirs[i])+'">'+esc(dd)+'</div>'; }
+  h+='</div>';
+  h+='<h3>Files loaded ('+rec.files.length+')</h3><div class="dl">';
+  for(i=0;i<rec.files.length;i++){ var ff=stripVol(rec.files[i]); var fc=hlClassFor(ff.toLowerCase());
+    h+='<div class="mono'+(fc?(" "+fc):"")+'" title="'+esc(rec.files[i])+'">'+esc(ff)+'</div>'; }
+  h+='</div>';
+  $("detBody").innerHTML=h;
+  showEl("detailCard",true);
+}
+function closeDetail(){ DETREC=null; showEl("detailCard",false); $("detBody").innerHTML=""; }
+function copyDetail(){
+  if(!DETREC){ setStatus("No record open","err"); return; }
+  var r=DETREC, out=[];
+  out.push(r.exe+"  —  "+ (r.runPathDisp||"(run path unknown)"));
+  out.push("tags: "+(r.tags.length?r.tags.join(", "):"none")+"  score "+r.score);
+  for(var q=0;q<r.reasons.length;q++) out.push("  - "+r.reasons[q]);
+  out.push("run count "+r.runCount+"; executions (UTC): "+r.runs.join(", "));
+  out.push(".pf "+r.src+"  created "+r.srcCreated+" (UTC)  hash "+r.hash+(r.note?("  note: "+r.note):""));
+  try{ window.clipboardData.setData("Text", out.join("\r\n")); setStatus("Record copied to clipboard","ok"); }
+  catch(e){ setStatus("Copy failed: "+e.message,"err"); }
+}
+
+/* ---------- generic grid (non-prefetch CSVs, e.g. the Timeline) ---------- */
+function isNumStr(s){ s=trimStr(String(s)); return s!=="" && /^-?\d+(\.\d+)?$/.test(s); }
+function ingestGeneric(raw, head, srcLabel){
+  setMode("generic");
+  GHEAD=head; GROWS=[];
+  for(var i=1;i<raw.length;i++){ var rw=raw[i]; if(rw.length>=1 && !(rw.length===1 && rw[0]==="")) GROWS.push(rw); }
+  GSRC=srcLabel;
+  GSRCIDX=-1; for(var c=0;c<head.length;c++){ if(/^SourceFile(name)?$/i.test(trimStr(head[c]))){ GSRCIDX=c; break; } }
+  if(GSRCIDX>=0){ var sv=[]; for(var s=0;s<GROWS.length;s++) sv.push(GSRCIDX<GROWS[s].length?GROWS[s][GSRCIDX]:""); populateSourceFilter(distinctVals(sv)); }
+  else populateSourceFilter([]);
+  $("results").className="";
+  $("srcpill").innerHTML=nf(GROWS.length)+" rows &middot; "+esc(srcLabel)+" ("+GHEAD.length+" cols)";
+  QUERY=""; $("q").value=""; GSORTKEY=-1;
+  closeDetail();
+  setStatus("Loaded "+nf(GROWS.length)+" rows (generic table view)","ok");
+  renderGeneric();
+}
+function renderGeneric(){
+  if(!GHEAD) return;
+  var q=QUERY, rows=[];
+  for(var i=0;i<GROWS.length;i++){ var rw=GROWS[i];
+    if(SRCFILTER && GSRCIDX>=0 && (GSRCIDX<rw.length?rw[GSRCIDX]:"")!==SRCFILTER) continue;
+    if(q){ if(rw.join("  ").toLowerCase().indexOf(q)<0) continue; }
+    rows.push(rw);
+  }
+  if(GSORTKEY>=0){ var k=GSORTKEY, dir=GSORTDIR; rows=rows.slice(0);
+    rows.sort(function(a,b){ var x=(k<a.length?a[k]:""), y=(k<b.length?b[k]:"");
+      if(isNumStr(x)&&isNumStr(y)) return (parseFloat(x)-parseFloat(y))*dir;
+      x=String(x).toLowerCase(); y=String(y).toLowerCase(); return x<y?-dir:(x>y?dir:0); });
+  }
+  $("statbar").innerHTML=stat(nf(GROWS.length),"rows")+stat(nf(GHEAD.length),"columns")+stat(nf(rows.length),"matching")+
+    '<span class="stat" style="min-width:240px"><span class="n" style="font-size:12px">'+esc(GSRC)+'</span><span class="l">source</span></span>';
+  var shown=rows.length>MAXROWS?MAXROWS:rows.length;
+  var h="<thead><tr>";
+  for(var c=0;c<GHEAD.length;c++){ var ar=(GSORTKEY===c)?(GSORTDIR>0?" ▲":" ▼"):""; h+='<th data-k="'+c+'">'+esc(GHEAD[c])+ar+'</th>'; }
+  h+="</tr></thead><tbody>";
+  for(var r=0;r<shown;r++){ var row=rows[r]; h+="<tr>";
+    for(var c2=0;c2<GHEAD.length;c2++){ var v=(c2<row.length?row[c2]:""); h+='<td class="mono" title="'+esc(v)+'">'+esc(v)+'</td>'; }
+    h+="</tr>"; }
+  h+="</tbody>"; $("tbl").innerHTML=h;
+  $("count").innerHTML=nf(rows.length)+" rows"+(shown<rows.length?(" (showing "+nf(shown)+")"):"");
+  var ths=$("tbl").getElementsByTagName("th");
+  for(var i2=0;i2<ths.length;i2++){ ths[i2].onclick=function(){ var kk=parseInt(this.getAttribute("data-k"),10);
+    if(GSORTKEY===kk) GSORTDIR*=-1; else { GSORTKEY=kk; GSORTDIR=1; } renderGeneric(); }; }
+  applyFreeze();
+  window.__viewRows=rows;
+}
+function setMode(m){
+  MODE=m; var pf=(m==="pf");
+  showEl("pfCards",pf); showEl("pfCats",pf); showEl("pfDateCtl",pf); showEl("pfFoot",pf);
+  showEl("iocBtn",pf); showEl("viewToggle",pf);
+  if(!pf){ showEl("iocWrap",false); closeDetail(); }
+  if(pf) showEl("srcWrap",false);
+  $("ovTitle").innerHTML = pf ? "Overview &mdash; reflects active filters" : "Overview";
+  $("tableTitle").innerHTML = pf ? ((VIEW==="time")?"Execution timeline":"Prefetch executables") : "Records";
+}
+
+/* ---------- export / copy ---------- */
+function cq(v){ v=(v==null)?"":String(v); return /[",\r\n]/.test(v)?('"'+v.replace(/"/g,'""')+'"'):v; }
+function nowStamp(){ var d=new Date(); function p(x){return (x<10?"0":"")+x;}
+  return d.getFullYear()+""+p(d.getMonth()+1)+p(d.getDate())+"_"+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds()); }
+function exportView(){
+  if(MODE==="generic"){ exportGeneric(); return; }
+  if(VIEW==="time"){ exportTimeline(); return; }
+  var rows=window.__viewRows||[];
+  if(!rows.length){ setStatus("Nothing to export","err"); return; }
+  var head=["ExecutableName","RunPath","Tags","Score","Suspicious","RunCount","LastRun_UTC","PreviousRuns_UTC","FirstSeen_pfCreated_UTC","Hash","SizeBytes","Version","Note","ParsingError","SourceFilename"];
+  var lines=[head.join(",")];
+  for(var i=0;i<rows.length;i++){ var r=rows[i];
+    lines.push([cq(r.exe),cq(r.runPathDisp),cq(r.tags.join("; ")),cq(r.score),cq(r.sus?"Yes":"No"),cq(r.runCount),
+      cq(r.lastRun),cq(r.runs.slice(1).join("; ")),cq(r.srcCreated),cq(r.hash),cq(r.size),cq(r.ver),
+      cq(r.note),cq(r.parseErr?"True":"False"),cq(r.src)].join(",")); }
+  var dir=LASTOUTDIR||$("outDir").value;
+  var path=dir+"\\filtered_export_"+nowStamp()+".csv";
+  try{ writeUtf8(path, lines.join("\r\n")); setStatus("Exported "+nf(rows.length)+" rows → "+path,"ok"); appendLog("Exported: "+path); }
+  catch(e){ setStatus("Export failed: "+e.message,"err"); }
+}
+function exportTimeline(){
+  var evs=window.__viewRows||[];
+  if(!evs.length){ setStatus("Nothing to export","err"); return; }
+  var head=["RunTime_UTC","ExecutableName","RunPath","WhichRun","RunCount","Tags","Score","Suspicious","SourceFilename"];
+  var lines=[head.join(",")];
+  for(var i=0;i<evs.length;i++){ var ev=evs[i], r=ev.rec;
+    lines.push([cq(ev.t),cq(r.exe),cq(r.runPathDisp),cq(ev.which===0?"last run":("prev "+ev.which)),cq(r.runCount),
+      cq(r.tags.join("; ")),cq(r.score),cq(r.sus?"Yes":"No"),cq(r.src)].join(",")); }
+  var dir=LASTOUTDIR||$("outDir").value;
+  var path=dir+"\\timeline_export_"+nowStamp()+".csv";
+  try{ writeUtf8(path, lines.join("\r\n")); setStatus("Exported "+nf(evs.length)+" executions → "+path,"ok"); appendLog("Exported: "+path); }
+  catch(e){ setStatus("Export failed: "+e.message,"err"); }
+}
+function exportGeneric(){
+  var rows=window.__viewRows||[];
+  if(!GHEAD||!rows.length){ setStatus("Nothing to export","err"); return; }
+  var lines=[]; var hd=[]; for(var c=0;c<GHEAD.length;c++) hd.push(cq(GHEAD[c])); lines.push(hd.join(","));
+  for(var i=0;i<rows.length;i++){ var rw=rows[i]; var cells=[]; for(var c2=0;c2<GHEAD.length;c2++) cells.push(cq(c2<rw.length?rw[c2]:"")); lines.push(cells.join(",")); }
+  var dir=LASTOUTDIR||$("outDir").value;
+  var path=dir+"\\filtered_export_"+nowStamp()+".csv";
+  try{ writeUtf8(path, lines.join("\r\n")); setStatus("Exported "+nf(rows.length)+" rows → "+path,"ok"); appendLog("Exported: "+path); }
+  catch(e){ setStatus("Export failed: "+e.message,"err"); }
+}
+function copyNotes(){
+  if(MODE==="generic"){
+    var grows=(window.__viewRows||[]).slice(0,500); if(!GHEAD||!grows.length){ setStatus("Nothing to copy","err"); return; }
+    var gout=[GHEAD.join("\t")];
+    for(var g=0;g<grows.length;g++) gout.push(grows[g].join("\t"));
+    try{ window.clipboardData.setData("Text", gout.join("\r\n")); setStatus("Copied "+grows.length+" rows (TSV)","ok"); }
+    catch(eg){ setStatus("Copy failed: "+eg.message,"err"); }
+    return;
+  }
+  var rows=(window.__viewRows||[]).slice(0,500);
+  if(!rows.length){ setStatus("Nothing to copy","err"); return; }
+  var out=[];
+  if(VIEW==="time"){
+    for(var j=0;j<rows.length;j++){ var ev=rows[j], er=ev.rec;
+      out.push(ev.t+" | "+er.exe+" | "+(er.runPathDisp||"?")+" | "+(ev.which===0?"last run":("prev "+ev.which))
+        +(er.tags.length?(" | "+er.tags.join(",")+" (score "+er.score+")"):"")); }
+    try{ window.clipboardData.setData("Text", out.join("\r\n")); setStatus("Copied "+out.length+" executions to clipboard","ok"); }
+    catch(et){ setStatus("Copy failed: "+et.message,"err"); }
+    return;
+  }
+  for(var i=0;i<rows.length;i++){ var r=rows[i];
+    out.push(r.lastRun+" | "+r.exe+" | "+(r.runPathDisp||"?")+" | runs="+r.runCount
+      +(r.tags.length?(" | "+r.tags.join(",")+" (score "+r.score+")"):"")
+      +(r.reasons.length?(" | "+r.reasons.join("; ")):"")); }
+  try{ window.clipboardData.setData("Text", out.join("\r\n"));
+    setStatus("Copied "+out.length+" rows to clipboard","ok"); }
+  catch(e){ setStatus("Copy failed: "+e.message,"err"); }
+}
+
+/* ---------- IOC list ---------- */
+function applyIocs(){
+  var t=$("iocBox").value, parts=String(t).split(/[\r\n,;]+/), out=[];
+  for(var i=0;i<parts.length;i++){ var s=trimStr(parts[i]).toLowerCase(); if(s) out.push(s); }
+  IOCS=out;
+  $("iocInfo").innerHTML=IOCS.length?(nf(IOCS.length)+" term(s) active"):"no terms";
+  if(MODE==="pf"&&ROWS.length){ rescoreAll(); render(); if(DETREC) renderDetail(DETREC); }
+  setStatus(IOCS.length?("IOC list applied — "+IOCS.length+" term(s), records rescored"):"IOC list cleared","ok");
+}
+
+/* ---------- wiring ---------- */
+function init(){
+  try{ window.resizeTo(1320,900); }catch(e){}
+  $("appver").innerHTML="&middot; v"+APP_VERSION;
+  try{ document.title="PECmd Wrapper v"+APP_VERSION; }catch(e){}
+  $("tblScroll").onscroll=applyFreeze;
+  var fso=new ActiveXObject("Scripting.FileSystemObject");
+  // default input = this machine's Prefetch folder (directory mode); point it at a collection tree for casework
+  $("pfPath").value=LIVE_PREFETCH;
+  $("inMode").value="d";
+  // default output = "Exported CSVs" next to the .hta (create it if missing); fall back to temp if app folder unknown
+  var expBase=htaFolder()||fso.GetSpecialFolder(2)+"";
+  var expDir=expBase+"\\Exported CSVs";
+  try{ if(!fso.FolderExists(expDir)) fso.CreateFolder(expDir); }catch(e){}
+  $("outDir").value=expDir;
+
+  var zoom=0.9;
+  $("fup").onclick=function(){ zoom=Math.min(zoom+0.1,2.6); document.body.style.zoom=zoom; };
+  $("fdown").onclick=function(){ zoom=Math.max(zoom-0.1,0.5); document.body.style.zoom=zoom; };
+
+  $("verBtn").onclick=checkVersion;
+  $("updBtn").onclick=downloadLatest;
+  $("openDirBtn").onclick=openDir;
+  $("procBtn").onclick=processPf;
+  $("liveBtn").onclick=function(){
+    $("inMode").value="d"; $("pfPath").value=LIVE_PREFETCH;
+    if(!canListFolder(LIVE_PREFETCH))
+      setStatus("Heads up: "+LIVE_PREFETCH+" is not readable — this app is NOT elevated. Relaunch as administrator to scan the live machine, or point at a collected copy instead.","err");
+    else setStatus("Live Prefetch folder readable — click 'Process → analyze' to scan this machine.","ok");
+  };
+  $("loadSelBtn").onclick=function(){ var v=$("producedSel").value; if(!v) return;
+    setStatus("Loading "+v,"muted"); window.setTimeout(function(){ loadCsvFile(v); },50); };
+  $("browseBtn").onclick=function(){ $("pfPick").click(); };
+  $("pfPick").onchange=function(){ if(this.value){ var v=this.value;
+    if($("inMode").value==="d"){ var i=v.lastIndexOf("\\"); if(i>0) v=v.substring(0,i); }
+    $("pfPath").value=v; } };
+  $("loadBtn").onclick=function(){ $("csvPick").click(); };
+  $("csvPick").onchange=function(){ if(this.value){ setStatus("Loading "+this.value,"muted"); loadCsvFile(this.value); } };
+  $("logToggle").onclick=function(){ var l=$("log");
+    if(l.style.display==="none"||!l.style.display){
+      if(!trimStr(l.innerHTML.replace(/<[^>]*>/g,""))){ l.innerHTML='<span class="muted">(empty — PECmd output appears here after a run finishes. While a run is in progress a console window shows live progress.)</span>'; l.setAttribute("data-ph","1"); }
+      l.style.display="block"; this.innerHTML="Hide log";
+    } else { l.style.display="none"; this.innerHTML="Show log"; } };
+
+  var catBtns=$("pfCats").getElementsByTagName("button");
+  for(var i=0;i<catBtns.length;i++){ if(catBtns[i].getAttribute("data-cat")){ catBtns[i].onclick=function(){
+    CURCAT=this.getAttribute("data-cat"); highlightCat(); render();
+  }; } }
+
+  $("q").onkeyup=function(){ if(qTimer) window.clearTimeout(qTimer);
+    qTimer=window.setTimeout(function(){ QUERY=trimStr($("q").value).toLowerCase(); render(); },150); };
+  $("dfrom").onchange=function(){ DFROM=dayNum(this.value); render(); };
+  $("dto").onchange=function(){ DTO=dayNum(this.value); render(); };
+  $("srcSel").onchange=function(){ SRCFILTER=this.value; render(); };
+  $("clearBtn").onclick=function(){ $("q").value="";$("dfrom").value="";$("dto").value="";$("srcSel").value="";
+    QUERY="";DFROM=0;DTO=0;SRCFILTER="";CURCAT="all"; highlightCat(); render(); };
+  $("exportBtn").onclick=exportView;
+  $("copyBtn").onclick=copyNotes;
+
+  $("vExec").onclick=function(){ setView("exec"); };
+  $("vTime").onclick=function(){ setView("time"); };
+  $("iocBtn").onclick=function(){ var w=$("iocWrap"); showEl("iocWrap", /\bhide\b/.test(w.className)); };
+  $("iocApply").onclick=applyIocs;
+  $("iocLoad").onclick=function(){ $("iocPick").click(); };
+  $("iocPick").onchange=function(){ if(this.value){
+    try{ $("iocBox").value=readUtf8(this.value); applyIocs(); }
+    catch(e){ setStatus("Could not read IOC file: "+e.message,"err"); } } };
+  $("detClose").onclick=closeDetail;
+  $("detCopy").onclick=copyDetail;
+
+  /* click delegation: data-q anywhere → search filter; pf table row → detail pane */
+  document.onclick=function(e){ e=e||window.event; var t=e.target||e.srcElement;
+    var q=t&&t.getAttribute?t.getAttribute("data-q"):null;
+    if(q){ $("q").value=q; QUERY=q.toLowerCase(); render(); return; }
+    if(MODE!=="pf") return;
+    var n=t;
+    while(n && n.tagName!=="TR"){ n=n.parentNode; if(n&&n.tagName==="TABLE") { n=null; break; } }
+    if(n && n.getAttribute && n.getAttribute("data-i")!=null && n.getAttribute("data-i")!==""){
+      var ix=parseInt(n.getAttribute("data-i"),10);
+      var rows=window.__viewRows||[];
+      if(ix>=0&&ix<rows.length){
+        var rr=rows[ix].rec||rows[ix];          // timeline rows carry the record in .rec
+        renderDetail(rr);
+        var trs=$("tbl").getElementsByTagName("tr");
+        for(var z=0;z<trs.length;z++){ if(trs[z].getAttribute("data-i")!=null){
+          var zi=parseInt(trs[z].getAttribute("data-i"),10);
+          var zr=rows[zi]?(rows[zi].rec||rows[zi]):null;
+          trs[z].className = (zi===ix) ? (((zr&&zr.sus)?"sus ":"")+"sel") : ((zr&&zr.sus)?"sus":""); } }
+      }
+    }
+  };
+
+  evaluateTooling(true);
+}
+function dayNum(s){ if(!s) return 0; var m=String(s).match(/(\d{4})-(\d{1,2})-(\d{1,2})/); if(!m) return 0;
+  function p(x){ x=String(x); return x.length<2?("0"+x):x; }
+  return Number(m[1]+p(m[2])+p(m[3])); }
+
+window.onload=init;
+</script>
+</body>
+</html>

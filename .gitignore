@@ -1,0 +1,8 @@
+# never publish case data or tool binaries
+*.csv
+Exported CSVs/
+PECmd.exe
+PECmd.dll
+PECmd.runtimeconfig.json
+*.log
+*.pf
