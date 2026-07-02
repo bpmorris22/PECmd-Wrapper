@@ -220,7 +220,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.3.2";
+var APP_VERSION = "0.3.3";
 var KNOWN_LATEST_PECMD = "2026.5.0";                                            // baseline as of 2026-07-02
 var PECMD_ZIP_URL = "https://download.ericzimmermanstools.com/net9/PECmd.zip";  // official EZ mirror (.NET 9 build)
 var PECMD_PAGE = "https://ericzimmerman.github.io/";                            // for live latest-version lookup
@@ -1052,10 +1052,15 @@ function renderTime(){
 }
 
 /* ---------- detail pane ---------- */
+var HIDE_SUPPORT = true;   // Files-loaded pane: hide OS support-file noise by default
 function hlClassFor(entryL){
   for(var t=0;t<IOCS.length;t++){ if(entryL.indexOf(IOCS[t])>=0) return "hl-ioc"; }
   if(isUserPath(entryL)) return "hl-user";
   return "";
+}
+/* OS support-file noise: MUI/DLL/INI/NLS/MUN/TLB/SYS/SCH/DAT/MANIFEST extensions + $MFT entries */
+function isSupportFile(pL){
+  return /\.(mui|dll|ini|nls|mun|tlb|sys|sch|dat|manifest)$/.test(pL) || /(^|\\)\$mft$/.test(pL);
 }
 function renderDetail(rec){
   DETREC=rec;
@@ -1081,11 +1086,19 @@ function renderDetail(rec){
   for(i=0;i<dirs.length;i++){ var dd=stripVol(dirs[i]); var dc=hlClassFor(dd.toLowerCase());
     h+='<div class="mono'+(dc?(" "+dc):"")+'" title="'+esc(dirs[i])+'">'+esc(dd)+'</div>'; }
   h+='</div>';
-  h+='<h3>Files loaded ('+rec.files.length+')</h3><div class="dl">';
-  for(i=0;i<rec.files.length;i++){ var ff=stripVol(rec.files[i]); var fc=hlClassFor(ff.toLowerCase());
-    h+='<div class="mono'+(fc?(" "+fc):"")+'" title="'+esc(rec.files[i])+'">'+esc(ff)+'</div>'; }
-  h+='</div>';
+  // Files loaded — optionally hide OS support-file noise; IOC-hit and user-path entries are ALWAYS kept
+  var frows=[], hidden=0;
+  for(i=0;i<rec.files.length;i++){ var ff=stripVol(rec.files[i]); var fL=ff.toLowerCase(); var fc=hlClassFor(fL);
+    if(HIDE_SUPPORT && !fc && isSupportFile(fL)){ hidden++; continue; }
+    frows.push('<div class="mono'+(fc?(" "+fc):"")+'" title="'+esc(rec.files[i])+'">'+esc(ff)+'</div>'); }
+  h+='<h3>Files loaded ('+(HIDE_SUPPORT?(frows.length+" shown of "+rec.files.length):rec.files.length)+')'
+    +' <label style="font-weight:normal;text-transform:none;letter-spacing:0;color:#8b949e;margin-left:10px" '
+    +'title="Hides MUI, DLL, INI, NLS, $MFT, MUN, TLB, SYS, SCH, DAT and MANIFEST entries. IOC hits and user-writable-path entries (highlighted) are never hidden, whatever their extension.">'
+    +'<input type="checkbox" id="detNoise"'+(HIDE_SUPPORT?' checked':'')+'> hide OS support files (dll, mui, ini, nls, …)</label></h3>'
+    +'<div class="dl">'+(frows.length?frows.join(""):'<span class="muted">(nothing to show'+(hidden?(' — '+nf(hidden)+' support files hidden'):'')+')</span>')+'</div>';
   $("detBody").innerHTML=h;
+  var nb=$("detNoise");
+  if(nb){ nb.onclick=function(){ HIDE_SUPPORT=this.checked; renderDetail(DETREC); }; }
   showEl("detailCard",true);
 }
 function closeDetail(){ DETREC=null; showEl("detailCard",false); $("detBody").innerHTML=""; }
