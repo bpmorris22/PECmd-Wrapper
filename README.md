@@ -18,7 +18,7 @@ No install, no dependencies, no framework: one `.hta` file that runs on any Wind
 - **Suspicion scoring** tuned on real incident data (see table below). Suspicious rows are shaded; every tag shows its reasoning on hover.
 - **IOC / keyword list** — paste or load terms; matched case-insensitively against executable names, run paths, directories and **every loaded file**, rescoring live (+3 per hit). Catches cross-references you will not spot in a grid (e.g. a system binary that loaded a file whose path contains your IOC).
 - **Filters** — category buttons with live counts (All / Suspicious / User-path / LOLBIN / Rare / Recent / IOC hits), free-text search across all columns *including loaded files*, and a UTC date range.
-- **Detail pane** — click any row: all 8 run timestamps, volumes, directories, and the full FilesLoaded list with IOC hits highlighted red and user-writable paths orange. A **"hide OS support files"** checkbox (on by default) suppresses MUI/DLL/INI/NLS/$MFT/MUN/TLB/SYS/SCH/DAT/MANIFEST noise — IOC-hit and user-path entries are never hidden, whatever their extension.
+- **Detail pane** — click any row: all 8 run timestamps, volumes, directories, and the full FilesLoaded list with IOC hits highlighted red and user-writable paths orange. A **"hide OS support files"** checkbox (on by default) suppresses MUI/DLL/INI/NLS/$MFT/MUN/TLB/SYS/SCH/DAT/MANIFEST/AUX/SDB/CONFIG noise — IOC-hit and user-path entries are never hidden, whatever their extension.
 - **Reporting** — export the filtered view (either view) to CSV, or copy formatted lines straight into case notes.
 - **Overview dashboard** — top executables, newest first-seen, and score-ranked suspicious list; all recomputed to reflect active filters, all clickable.
 

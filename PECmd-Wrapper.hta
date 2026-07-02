@@ -220,7 +220,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.3.3";
+var APP_VERSION = "0.3.4";
 var KNOWN_LATEST_PECMD = "2026.5.0";                                            // baseline as of 2026-07-02
 var PECMD_ZIP_URL = "https://download.ericzimmermanstools.com/net9/PECmd.zip";  // official EZ mirror (.NET 9 build)
 var PECMD_PAGE = "https://ericzimmerman.github.io/";                            // for live latest-version lookup
@@ -1058,9 +1058,9 @@ function hlClassFor(entryL){
   if(isUserPath(entryL)) return "hl-user";
   return "";
 }
-/* OS support-file noise: MUI/DLL/INI/NLS/MUN/TLB/SYS/SCH/DAT/MANIFEST extensions + $MFT entries */
+/* OS support-file noise: MUI/DLL/INI/NLS/MUN/TLB/SYS/SCH/DAT/MANIFEST/AUX/SDB/CONFIG extensions + $MFT entries */
 function isSupportFile(pL){
-  return /\.(mui|dll|ini|nls|mun|tlb|sys|sch|dat|manifest)$/.test(pL) || /(^|\\)\$mft$/.test(pL);
+  return /\.(mui|dll|ini|nls|mun|tlb|sys|sch|dat|manifest|aux|sdb|config)$/.test(pL) || /(^|\\)\$mft$/.test(pL);
 }
 function renderDetail(rec){
   DETREC=rec;
@@ -1093,7 +1093,7 @@ function renderDetail(rec){
     frows.push('<div class="mono'+(fc?(" "+fc):"")+'" title="'+esc(rec.files[i])+'">'+esc(ff)+'</div>'); }
   h+='<h3>Files loaded ('+(HIDE_SUPPORT?(frows.length+" shown of "+rec.files.length):rec.files.length)+')'
     +' <label style="font-weight:normal;text-transform:none;letter-spacing:0;color:#8b949e;margin-left:10px" '
-    +'title="Hides MUI, DLL, INI, NLS, $MFT, MUN, TLB, SYS, SCH, DAT and MANIFEST entries. IOC hits and user-writable-path entries (highlighted) are never hidden, whatever their extension.">'
+    +'title="Hides MUI, DLL, INI, NLS, $MFT, MUN, TLB, SYS, SCH, DAT, MANIFEST, AUX, SDB and CONFIG entries. IOC hits and user-writable-path entries (highlighted) are never hidden, whatever their extension.">'
     +'<input type="checkbox" id="detNoise"'+(HIDE_SUPPORT?' checked':'')+'> hide OS support files (dll, mui, ini, nls, …)</label></h3>'
     +'<div class="dl">'+(frows.length?frows.join(""):'<span class="muted">(nothing to show'+(hidden?(' — '+nf(hidden)+' support files hidden'):'')+')</span>')+'</div>';
   $("detBody").innerHTML=h;
@@ -1285,7 +1285,18 @@ function init(){
   };
   $("loadSelBtn").onclick=function(){ var v=$("producedSel").value; if(!v) return;
     setStatus("Loading "+v,"muted"); window.setTimeout(function(){ loadCsvFile(v); },50); };
-  $("browseBtn").onclick=function(){ $("pfPick").click(); };
+  $("browseBtn").onclick=function(){
+    if($("inMode").value==="d"){
+      // real folder picker — the HTML file input can only select files
+      try{
+        var sha=new ActiveXObject("Shell.Application");
+        var fld=sha.BrowseForFolder(0,"Select the prefetch folder to process (collection trees are fine — the scan recurses).",0x51);
+        if(fld){ var p=""; try{ p=fld.Self.Path+""; }catch(e2){}
+          if(/^[a-z]:\\|^\\\\/i.test(p)) $("pfPath").value=p;
+          else if(p) setStatus("That selection has no filesystem path — pick a real folder.","err"); }
+      }catch(e){ $("pfPick").click(); }   // fallback to the file picker if the shell dialog is unavailable
+    } else { $("pfPick").click(); }
+  };
   $("pfPick").onchange=function(){ if(this.value){ var v=this.value;
     if($("inMode").value==="d"){ var i=v.lastIndexOf("\\"); if(i>0) v=v.substring(0,i); }
     $("pfPath").value=v; } };
