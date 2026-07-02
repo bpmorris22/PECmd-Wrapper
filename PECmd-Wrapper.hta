@@ -220,7 +220,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.3.1";
+var APP_VERSION = "0.3.2";
 var KNOWN_LATEST_PECMD = "2026.5.0";                                            // baseline as of 2026-07-02
 var PECMD_ZIP_URL = "https://download.ericzimmermanstools.com/net9/PECmd.zip";  // official EZ mirror (.NET 9 build)
 var PECMD_PAGE = "https://ericzimmerman.github.io/";                            // for live latest-version lookup
@@ -279,17 +279,50 @@ function msOf(s){ if(!s) return 0; var m=String(s).match(/(\d{4})-(\d{2})-(\d{2}
 function dayOf(s){ if(!s) return 0; var m=String(s).match(/(\d{4})-(\d{2})-(\d{2})/); if(!m) return 0; return Number(m[1]+m[2]+m[3]); }
 function stripVol(p){ return String(p).replace(/\\VOLUME\{[^}]*\}/gi,""); }
 
-/* ---------- file IO via ActiveX (UTF-8 safe) ---------- */
+/* ---------- file IO via ActiveX (UTF-8 safe, with network-zone fallback) ----------
+   ADODB.Stream is the proper UTF-8 reader, but when the .hta runs from a NETWORK location
+   (mapped drive / UNC share) mshta assigns it the intranet/internet zone and ADODB refuses
+   every LoadFromFile/SaveToFile with "Safety settings on this computer prohibit accessing a
+   data source on another domain" — regardless of where the target file lives. Seen in the
+   field 2026-07-02 (app run from Z:\ on an analysis VM). FSO is not zone-checked, so we fall
+   back to ANSI file IO: CSV structure is unaffected (all-ASCII), only rare non-ASCII chars
+   (accented usernames in paths) display mojibake'd. Best fidelity = run locally. */
+var FILE_IO="adodb";                 // flips to "fso" permanently on the first zone-policy block
+function zoneNote(){
+  appendLog("NOTE: this app is running from a network location, so Windows zone policy blocks the UTF-8 file reader (ADODB.Stream). Falling back to ANSI file IO — everything works, but non-ASCII characters (accented usernames in paths) may display incorrectly. For full fidelity copy this folder to a LOCAL path (e.g. C:\\Tools\\PECmd) and run it from there.");
+}
 function readUtf8(path){
-  // ReadText(-1) on a large file is quadratic in MSHTML (30s for 16MB); read in 64KB chunks (~0.1s).
-  var st=new ActiveXObject("ADODB.Stream");
-  st.Type=2; st.Charset="utf-8"; st.Open(); st.LoadFromFile(path);
-  var parts=[]; while(!st.EOS){ parts.push(st.ReadText(65536)); } st.Close();
-  return parts.join("");
+  if(FILE_IO==="adodb"){
+    try{
+      // ReadText(-1) on a large file is quadratic in MSHTML (30s for 16MB); read in 64KB chunks (~0.1s).
+      var st=new ActiveXObject("ADODB.Stream");
+      st.Type=2; st.Charset="utf-8"; st.Open(); st.LoadFromFile(path);
+      var parts=[]; while(!st.EOS){ parts.push(st.ReadText(65536)); } st.Close();
+      return parts.join("");
+    }catch(e){
+      if(!/safety settings|data source/i.test(e.message||"")) throw e;   // real IO errors propagate
+      FILE_IO="fso"; zoneNote();
+    }
+  }
+  var fso=new ActiveXObject("Scripting.FileSystemObject");
+  var f=fso.OpenTextFile(path,1,false,0), out=f.ReadAll(); f.Close();
+  // a UTF-8 BOM read as ANSI shows up as three cp1252 chars — strip it
+  if(out.length>=3 && out.charCodeAt(0)===239 && out.charCodeAt(1)===187 && out.charCodeAt(2)===191) out=out.substring(3);
+  return out;
 }
 function writeUtf8(path,text){
-  var st=new ActiveXObject("ADODB.Stream");
-  st.Type=2; st.Charset="utf-8"; st.Open(); st.WriteText(text); st.SaveToFile(path,2); st.Close();
+  if(FILE_IO==="adodb"){
+    try{
+      var st=new ActiveXObject("ADODB.Stream");
+      st.Type=2; st.Charset="utf-8"; st.Open(); st.WriteText(text); st.SaveToFile(path,2); st.Close();
+      return;
+    }catch(e){
+      if(!/safety settings|data source/i.test(e.message||"")) throw e;
+      FILE_IO="fso"; zoneNote();
+    }
+  }
+  var fso=new ActiveXObject("Scripting.FileSystemObject");
+  var f=fso.CreateTextFile(path,true,false); f.Write(text); f.Close();
 }
 function uid(){ return new Date().getTime()+""+Math.floor(Math.random()*100000); }
 /* cmd expands %N / %VAR% inside .bat lines even within quotes — Velociraptor trees contain literal % (C%3A) */
@@ -1300,6 +1333,14 @@ function init(){
   };
 
   evaluateTooling(true);
+  if(isNetworkPath(htaFolder()))
+    appendLog("Heads-up: this app is running from a network location ("+htaFolder()+"). Windows zone policy may block the UTF-8 file reader there; the app falls back to ANSI IO automatically, but for full fidelity copy the folder to a local path (e.g. C:\\Tools\\PECmd).");
+}
+function isNetworkPath(p){
+  try{ if(/^\\\\/.test(p)) return true;
+    var fso=new ActiveXObject("Scripting.FileSystemObject");
+    return fso.GetDrive(fso.GetDriveName(p)).DriveType===3;   // 3 = Remote
+  }catch(e){ return false; }
 }
 function dayNum(s){ if(!s) return 0; var m=String(s).match(/(\d{4})-(\d{1,2})-(\d{1,2})/); if(!m) return 0;
   function p(x){ x=String(x); return x.length<2?("0"+x):x; }

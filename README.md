@@ -54,6 +54,7 @@ Score ≥ 2 marks a row suspicious. Tuned against real-world datasets to keep th
 - Prefetch is not a complete execution record: SYSTEM services started at boot are often **not** prefetch-traced, prefetch may be disabled on servers/SSD-policy machines, and only the last 8 run timestamps per executable are retained. Absence of a `.pf` is not evidence of absence.
 - Corrupt/sparse `.pf` files in collection trees (a common KAPE artifact for in-use files) are skipped by PECmd and counted in the status line rather than failing the run.
 - Table display caps at 6,000 rows for responsiveness; exports always write the full filtered set.
+- **Running from a network location** (mapped drive / UNC share) works, with one caveat: Windows zone policy blocks the UTF-8 file reader (`ADODB.Stream`) there, so the app automatically falls back to ANSI file IO (v0.3.2+) and logs a one-time note. Everything functions, but rare non-ASCII characters (e.g. accented usernames in paths) may display incorrectly. For full fidelity copy the folder to a local path and run it from there.
 
 ## Credits
 
