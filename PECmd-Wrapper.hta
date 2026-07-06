@@ -144,6 +144,8 @@
     <input type="file" id="pfPick" style="display:none">
     <button class="btn" id="browseBtn">Browse&hellip;</button>
     <button class="btn" id="liveBtn" title="Point at this machine's live C:\Windows\Prefetch. Reading it requires the app to run elevated (right-click → Run as administrator).">Scan this machine</button>
+    <label class="fld" title="Required before processing. Guessed from the input path (Collection-<host>-… segments, or this machine for live paths) — overwrite it if the guess is wrong.">Target hostname (required) &mdash; names the output folder _Processed\&lt;host&gt;\PECmd next to this app</label>
+    <input class="txt" id="hostName" value="" style="width:260px" placeholder="e.g. LT-2738RQ3">
     <label class="fld">CSV output directory</label>
     <input class="txt wide" id="outDir" value="">
     <button class="btn" id="openDirBtn">Open folder</button>
@@ -234,7 +236,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.5.0";
+var APP_VERSION = "0.6.0";
 var KNOWN_LATEST_PECMD = "2026.5.0";                                            // baseline as of 2026-07-02
 var PECMD_ZIP_URL = "https://download.ericzimmermanstools.com/net9/PECmd.zip";  // official EZ mirror (.NET 9 build)
 var PECMD_PAGE = "https://ericzimmerman.github.io/";                            // for live latest-version lookup
@@ -534,8 +536,43 @@ function canListFolder(p){
     var e=new Enumerator(fso.GetFolder(p).Files); e.atEnd(); return true; }catch(err){ return false; }
 }
 
+/* ---------- target hostname + _Processed output convention (family, 2026-07-06) ----------
+   All processed output lands in <appFolder>\_Processed\<Hostname>\<AppName>\ so the
+   Artifact-Finder (and the operator) can see per-host state at a glance. The hostname field is
+   REQUIRED before processing (not for just viewing CSVs). Guess order: Collection-<host>-<date>
+   segment in the input path → \_Processed\<host>\ in a CLI-passed outDir → live-machine paths
+   (X:\Windows / X:\Users → this computer's name). User-typed values are never overwritten. */
+var APP_NAME="PECmd";
+var HOST_TOUCHED=false, OUT_TOUCHED=false;
+function sanitHost(s){ return String(s).replace(/[^A-Za-z0-9._\-]/g,"-").replace(/^[\-.]+|[\-.]+$/g,""); }
+function guessHost(p){
+  p=String(p||"");
+  var m=p.match(/Collection-([A-Za-z0-9][A-Za-z0-9\-_\.]*?)-\d{4}-\d{2}-\d{2}/i); if(m) return m[1];
+  m=p.match(/[\\\/]_Processed[\\\/]([^\\\/]+)[\\\/]/i); if(m) return m[1];
+  if(/^[a-z]:\\(windows|users)(\\|$)/i.test(p)){ try{ return new ActiveXObject("WScript.Network").ComputerName+""; }catch(e){} }
+  return "";
+}
+function defaultOutDir(){
+  var h=sanitHost($("hostName").value); if(!h) return "";
+  var base=htaFolder(); if(!base){ try{ base=new ActiveXObject("Scripting.FileSystemObject").GetSpecialFolder(2)+""; }catch(e){ return ""; } }
+  return base+"\\_Processed\\"+h+"\\"+APP_NAME;
+}
+function syncOutDir(){ if(OUT_TOUCHED) return; var d=defaultOutDir(); if(d) $("outDir").value=d; }
+function hostGuessFrom(p){
+  if(!HOST_TOUCHED || !trimStr($("hostName").value)){ var g=guessHost(p); if(g) $("hostName").value=sanitHost(g); }
+  syncOutDir();
+}
+function requireHost(){
+  var h=sanitHost($("hostName").value);
+  if(!h){ setStatus("Target hostname is required — it names the output folder _Processed\\<host>\\"+APP_NAME+". Type the host this artifact came from, then process again.","err");
+    try{ $("hostName").focus(); }catch(e){} return ""; }
+  if(!trimStr($("outDir").value)) syncOutDir();
+  return h;
+}
+
 function processPf(){
   var inp=$("pfPath").value;
+  if(!requireHost()) return;
   var outdir=$("outDir").value;
   var inmode=$("inMode").value;   // "f" file, "d" directory
   var fso=new ActiveXObject("Scripting.FileSystemObject");
@@ -1375,11 +1412,11 @@ function init(){
   // default input = this machine's Prefetch folder (directory mode); point it at a collection tree for casework
   $("pfPath").value=LIVE_PREFETCH;
   $("inMode").value="d";
-  // default output = "Exported CSVs" next to the .hta (create it if missing); fall back to temp if app folder unknown
-  var expBase=htaFolder()||fso.GetSpecialFolder(2)+"";
-  var expDir=expBase+"\\Exported CSVs";
-  try{ if(!fso.FolderExists(expDir)) fso.CreateFolder(expDir); }catch(e){}
-  $("outDir").value=expDir;
+  // default output follows the target hostname: _Processed\<host>\PECmd next to the .hta
+  // (the default input is the live Prefetch folder, so the first guess is this computer's name)
+  hostGuessFrom(LIVE_PREFETCH);
+  $("hostName").onkeyup=function(){ HOST_TOUCHED=true; syncOutDir(); };
+  $("outDir").onkeyup=function(){ OUT_TOUCHED=true; };
 
   var zoom=0.9;
   var zContent=$("content");
@@ -1395,6 +1432,7 @@ function init(){
   $("procBtn").onclick=processPf;
   $("liveBtn").onclick=function(){
     $("inMode").value="d"; $("pfPath").value=LIVE_PREFETCH;
+    hostGuessFrom(LIVE_PREFETCH);
     if(!canListFolder(LIVE_PREFETCH))
       setStatus("Heads up: "+LIVE_PREFETCH+" is not readable — this app is NOT elevated. Relaunch as administrator to scan the live machine, or point at a collected copy instead.","err");
     else setStatus("Live Prefetch folder readable — click 'Process → analyze' to scan this machine.","ok");
@@ -1408,14 +1446,14 @@ function init(){
         var sha=new ActiveXObject("Shell.Application");
         var fld=sha.BrowseForFolder(0,"Select the prefetch folder to process (collection trees are fine — the scan recurses).",0x51);
         if(fld){ var p=""; try{ p=fld.Self.Path+""; }catch(e2){}
-          if(/^[a-z]:\\|^\\\\/i.test(p)) $("pfPath").value=p;
+          if(/^[a-z]:\\|^\\\\/i.test(p)){ $("pfPath").value=p; hostGuessFrom(p); }
           else if(p) setStatus("That selection has no filesystem path — pick a real folder.","err"); }
       }catch(e){ $("pfPick").click(); }   // fallback to the file picker if the shell dialog is unavailable
     } else { $("pfPick").click(); }
   };
   $("pfPick").onchange=function(){ if(this.value){ var v=this.value;
     if($("inMode").value==="d"){ var i=v.lastIndexOf("\\"); if(i>0) v=v.substring(0,i); }
-    $("pfPath").value=v; } };
+    $("pfPath").value=v; hostGuessFrom(v); } };
   $("loadBtn").onclick=function(){ $("csvPick").click(); };
   $("csvPick").onchange=function(){ if(this.value){ setStatus("Loading "+this.value,"muted"); loadCsvFile(this.value); } };
   $("logToggle").onclick=function(){ var l=$("log");
@@ -1535,7 +1573,8 @@ function applyCli(cli){ if(!cli.input) return false;
   if(fso.FolderExists(cli.input)){ $("inMode").value="d"; $("pfPath").value=cli.input; }
   else if(fso.FileExists(cli.input)){ $("inMode").value="f"; $("pfPath").value=cli.input; }
   else { setStatus("CLI input not found: "+cli.input,"err"); appendLog("CLI input not found: "+cli.input); return false; }
-  if(cli.outDir) $("outDir").value=cli.outDir;
+  if(cli.outDir){ $("outDir").value=cli.outDir; OUT_TOUCHED=true; hostGuessFrom(cli.outDir); }
+  else hostGuessFrom(cli.input);
   if(cli.auto){ appendLog("CLI: /auto — processing "+cli.input); window.setTimeout(function(){ processPf(); },200); }
   else setStatus("CLI: input prefilled — click 'Process → analyze' to run.","muted");
   return true; }
@@ -1607,6 +1646,7 @@ window.onload=function(){ init(); try{ window.setTimeout(checkSelfUpdate,600); }
     <ul>
       <li><code>&lt;input&gt;</code> — a <code>.csv</code> (auto-loads into the viewer) or a <code>.pf</code> file / prefetch directory (prefilled; processed with <code>/auto</code>).</li>
       <li><code>&lt;outDir&gt;</code> — CSV output directory (optional). &nbsp; <code>/auto</code> — process immediately.</li>
+      <li><b>Target hostname</b> is required before processing — it names the output folder <code>_Processed\&lt;host&gt;\PECmd</code> next to this app (family convention shared with the Artifact-Finder). It is guessed from <code>Collection-&lt;host&gt;-…</code> paths, a passed <code>_Processed\&lt;host&gt;\</code> outDir, or this machine's name for live paths — overwrite the guess if it's wrong.</li>
     </ul>
     <h3>Notes</h3>
     <ul>
