@@ -6,3 +6,4 @@ PECmd.dll
 PECmd.runtimeconfig.json
 *.log
 *.pf
+PECmd-Wrapper.settings.json

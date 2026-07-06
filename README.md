@@ -21,6 +21,7 @@ No install, no dependencies, no framework: one `.hta` file that runs on any Wind
 - **Detail pane** — click any row: all 8 run timestamps, volumes, directories, and the full FilesLoaded list with IOC hits highlighted red and user-writable paths orange. A **"hide OS support files"** checkbox (on by default) suppresses MUI/DLL/INI/NLS/$MFT/MUN/TLB/SYS/SCH/DAT/MANIFEST/AUX/SDB/CONFIG noise — IOC-hit and user-path entries are never hidden, whatever their extension.
 - **Reporting** — export the filtered view (either view) to CSV, or copy formatted lines straight into case notes.
 - **Overview dashboard** — top executables, newest first-seen, and score-ranked suspicious list; all recomputed to reflect active filters, all clickable.
+- **Resizable columns** (v0.5.0) — drag a column header's right edge to resize; double-click the edge to reset. Widths are remembered per view (Executables / Timeline / generic grid) in a small `PECmd-Wrapper.settings.json` next to the app.
 
 ## Quick start
 
