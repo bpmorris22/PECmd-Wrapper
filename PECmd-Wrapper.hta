@@ -96,6 +96,15 @@
   .lnk{cursor:pointer;color:#58a6ff}
   .lnk:hover{text-decoration:underline}
   .sep{display:inline-block;width:1px;height:18px;background:#30363d;margin:0 6px;vertical-align:middle}
+  .modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.66);z-index:1000;overflow:auto}
+  .modal .mcard{max-width:780px;margin:36px auto;background:#161b22;border:1px solid #30363d;border-radius:10px;padding:18px 22px}
+  .modal h2{margin:0 0 6px;font-size:18px;font-weight:600}
+  .modal h3{margin:12px 0 4px;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:#8b949e}
+  .modal ul{margin:4px 0;padding-left:20px}.modal li{margin:3px 0;font-size:13px}
+  .modal p{font-size:13px;margin:6px 0}
+  .modal code{background:#0d1117;border:1px solid #30363d;border-radius:4px;padding:2px 6px;font-family:Consolas,monospace;font-size:12px}
+  .modal .x{float:right;cursor:pointer;color:#8b949e;font-size:22px;line-height:1}.modal .x:hover{color:#e6edf3}
+  .modal .gh{font-family:Consolas,monospace;font-size:12px}
 </style>
 </head>
 <body>
@@ -104,6 +113,7 @@
   <span class="pill" id="verpill">version: checking&hellip;</span>
   <span class="pill" id="srcpill">no data loaded</span>
   <span style="float:right">
+    <button class="btn" id="helpBtn" onclick="openHelp()" title="Help, about &amp; GitHub link">Help</button>
     <button class="btn" id="fdown" title="Smaller text">A&minus;</button>
     <button class="btn" id="fup" title="Larger text">A+</button>
   </span>
@@ -221,7 +231,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.4.0";
+var APP_VERSION = "0.4.1";
 var KNOWN_LATEST_PECMD = "2026.5.0";                                            // baseline as of 2026-07-02
 var PECMD_ZIP_URL = "https://download.ericzimmermanstools.com/net9/PECmd.zip";  // official EZ mirror (.NET 9 build)
 var PECMD_PAGE = "https://ericzimmerman.github.io/";                            // for live latest-version lookup
@@ -1376,10 +1386,33 @@ function dayNum(s){ if(!s) return 0; var m=String(s).match(/(\d{4})-(\d{1,2})-(\
   function p(x){ x=String(x); return x.length<2?("0"+x):x; }
   return Number(m[1]+p(m[2])+p(m[3])); }
 
+/* ---------- help / about overlay ---------- */
+var GITHUB="https://github.com/bpmorris22/PECmd-Wrapper";
+function openUrl(u){ try{ new ActiveXObject("WScript.Shell").Run('"'+u+'"',1,false); }catch(e){ setStatus("Could not open browser: "+e.message,"err"); } }
+function openHelp(){ try{ $("helpVer").innerHTML="v"+APP_VERSION; }catch(e){} showEl("helpModal",true); }
+function closeHelp(){ showEl("helpModal",false); }
+
 /* ---------- command-line invocation: "<inputOrCsv>" ["<outDir>"] [/auto] ----------
    .csv → auto-load into the viewer; a .pf file or directory → prefill input (+process if /auto).
    Lets an external artifact-finder open the analyzer already pointed at a prefetch artifact. */
-function tokenizeCmdTail(){ var cl=""; try{ cl=pecmdHta.commandLine+""; }catch(e){ return []; }
+/* HTA:APPLICATION.commandLine is UNDEFINED in IE=edge document mode (a known mshta quirk that silently
+   kills CLI args). Recover it from WMI: the newest mshta.exe process whose command line names this .hta. */
+function getCommandLine(){
+  try{ var cl=pecmdHta.commandLine+""; if(cl && cl!=="undefined") return cl; }catch(e){}
+  try{
+    var lp=decodeURIComponent(location.pathname+"").replace(/^\//,"").replace(/\//g,"\\");
+    var fn=lp.substring(lp.lastIndexOf("\\")+1).toLowerCase(); if(!fn) return "";
+    var loc=new ActiveXObject("WbemScripting.SWbemLocator"), svc=loc.ConnectServer(".","root\\cimv2");
+    var q=svc.ExecQuery("SELECT CommandLine,CreationDate FROM Win32_Process WHERE Name='mshta.exe'");
+    var best="", bestDate="", en=new Enumerator(q);
+    for(; !en.atEnd(); en.moveNext()){ var pr=en.item(); var pcl=(pr.CommandLine==null?"":pr.CommandLine+"");
+      if(pcl.toLowerCase().indexOf(fn)<0) continue; var cd=(pr.CreationDate==null?"":pr.CreationDate+"");
+      if(!best || cd>bestDate){ best=pcl; bestDate=cd; } }
+    return best;
+  }catch(e2){}
+  return "";
+}
+function tokenizeCmdTail(){ var cl=getCommandLine(); if(!cl) return [];
   var m=cl.match(/\.hta"?/i); var tail=m?cl.substring(m.index+m[0].length):cl;
   var toks=[],i=0,n=tail.length,cur="",inq=false;
   while(i<n){ var c=tail.charAt(i);
@@ -1407,5 +1440,32 @@ function applyCli(cli){ if(!cli.input) return false;
 
 window.onload=init;
 </script>
+<div id="helpModal" class="modal hide" onclick="if((event.srcElement||{}).id==='helpModal')closeHelp()">
+  <div class="mcard">
+    <span class="x" onclick="closeHelp()" title="Close">&times;</span>
+    <h2>PECmd Wrapper <span class="muted" style="font-size:13px;font-weight:400" id="helpVer"></span></h2>
+    <div class="gh muted">GitHub: <span class="lnk" onclick="openUrl(GITHUB)">https://github.com/bpmorris22/PECmd-Wrapper</span></div>
+    <p>A single-file GUI for triaging <b>Windows Prefetch</b> with Eric Zimmerman's PECmd — runs PECmd for you and turns the output into an interactive, suspicion-scored execution-history view.</p>
+    <h3>Quick start</h3>
+    <ul>
+      <li>Put this <code>.hta</code> next to <code>PECmd.exe</code>, or use <b>Update / download PECmd</b> to fetch it.</li>
+      <li>Point the input at <code>C:\Windows\Prefetch</code> (run elevated), a collected Prefetch folder (KAPE/Velociraptor trees work), or a single <code>.pf</code> — then <b>Process → analyze</b>.</li>
+      <li>Or <b>Load existing CSV…</b> to view a PECmd CSV you already have.</li>
+    </ul>
+    <h3>Command line</h3>
+    <p><code>mshta "PECmd-Wrapper.hta" "&lt;inputOrCsv&gt;" ["&lt;outDir&gt;"] [/auto]</code></p>
+    <ul>
+      <li><code>&lt;input&gt;</code> — a <code>.csv</code> (auto-loads into the viewer) or a <code>.pf</code> file / prefetch directory (prefilled; processed with <code>/auto</code>).</li>
+      <li><code>&lt;outDir&gt;</code> — CSV output directory (optional). &nbsp; <code>/auto</code> — process immediately.</li>
+    </ul>
+    <h3>Notes</h3>
+    <ul>
+      <li>Two views: <b>Executables</b> (one row per prefetch file) and <b>Timeline</b> (every recorded execution). Suspicion scoring, IOC/keyword list, and a detail pane are built in.</li>
+      <li>All timestamps are UTC. Windows 11 24H2 prefetch (v31) needs PECmd 2026.x or newer.</li>
+    </ul>
+    <p class="muted" style="font-size:11px">MIT © 2026 Ben Morris — click the link above for the full README &amp; releases.</p>
+  </div>
+</div>
+
 </body>
 </html>
