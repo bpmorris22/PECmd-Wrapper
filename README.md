@@ -56,6 +56,17 @@ Score ≥ 2 marks a row suspicious. Tuned against real-world datasets to keep th
 - Table display caps at 6,000 rows for responsiveness; exports always write the full filtered set.
 - **Running from a network location** (mapped drive / UNC share) works, with one caveat: Windows zone policy blocks the UTF-8 file reader (`ADODB.Stream`) there, so the app automatically falls back to ANSI file IO (v0.3.2+) and logs a one-time note. Everything functions, but rare non-ASCII characters (e.g. accented usernames in paths) may display incorrectly. For full fidelity copy the folder to a local path and run it from there.
 
+## Command line
+
+The wrapper can be launched with arguments so an artifact-finder (or a shortcut) opens it already pointed at an artifact:
+
+```
+mshta.exe "PECmd-Wrapper.hta" "<inputOrCsv>" ["<outDir>"] [/auto]
+```
+- `<input>` — a `.csv` (auto-loaded into the viewer) or a `.pf` file / prefetch directory (prefilled; processed if `/auto`).
+- `<outDir>` — CSV output directory (optional).
+- `/auto` — process immediately.
+
 ## Credits
 
 - [Eric Zimmerman](https://ericzimmerman.github.io/) for PECmd and the EZ Tools suite — this is an unaffiliated wrapper around his parser; all parsing credit is his.
