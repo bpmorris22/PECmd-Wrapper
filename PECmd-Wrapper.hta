@@ -145,7 +145,7 @@
     <button class="btn" id="browseBtn">Browse&hellip;</button>
     <button class="btn" id="liveBtn" title="Point at this machine's live C:\Windows\Prefetch. Reading it requires the app to run elevated (right-click → Run as administrator).">Scan this machine</button>
     <label class="fld" title="Required before processing. Guessed from the input path (Collection-<host>-… segments, or this machine for live paths) — overwrite it if the guess is wrong.">Target hostname (required) &mdash; names the output folder _Processed\&lt;host&gt;\PECmd next to this app</label>
-    <input class="txt" id="hostName" value="" style="width:260px" placeholder="e.g. LT-2738RQ3">
+    <input class="txt" id="hostName" value="" style="width:260px" placeholder="e.g. WORKSTATION-01">
     <label class="fld">CSV output directory</label>
     <input class="txt wide" id="outDir" value="">
     <button class="btn" id="openDirBtn">Open folder</button>
@@ -236,7 +236,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.9.0";
+var APP_VERSION = "0.9.1";
 var KNOWN_LATEST_PECMD = "2026.5.0";                                            // baseline as of 2026-07-02
 var PECMD_ZIP_URL = "https://download.ericzimmermanstools.com/net9/PECmd.zip";  // official EZ mirror (.NET 9 build)
 var PECMD_PAGE = "https://ericzimmerman.github.io/";                            // for live latest-version lookup
@@ -740,6 +740,16 @@ function populateProduced(list){
 }
 function openDir(){ var d=$("outDir").value; if(!d){ setStatus("No output directory set","err"); return; }
   try{ new ActiveXObject("WScript.Shell").Run('explorer.exe "'+d+'"',1,false); }catch(e){ setStatus("Could not open folder: "+e.message,"err"); } }
+/* Surface CSVs already sitting in the output folder (_Processed\<host>\PECmd) into the 'Produced CSVs'
+   picker — so re-opening a previously-processed host is a dropdown pick, not a blind file dialog that
+   lands in the last-browsed KAPE tree. Returns the count found; announce=true also sets a status line. */
+function showOutDirCsvs(announce){
+  var d=trimStr($("outDir").value); if(!d) return 0;
+  var l=listCsvFiles(d); if(!l.length){ if(announce) setStatus("No CSVs in "+d+" yet — process this host first, or use the file picker for another location.","muted"); return 0; }
+  PRODUCED=l; populateProduced(l);
+  if(announce) setStatus("Found "+l.length+" CSV(s) in the output folder — pick one from 'Produced CSVs' below and click 'Load selected'.","ok");
+  return l.length;
+}
 
 /* ---------- CSV parser (RFC4180) — line-split hybrid: native split for the bulk,
    careful field parsing only for lines containing quotes; merges rows split across
@@ -846,7 +856,7 @@ function ingestPf(raw, idx, srcLabel){
   populateSourceFilter([]);
   $("results").className="";
   $("srcpill").innerHTML=nf(ROWS.length)+" prefetch files &middot; "+nf(EVENTS.length)+" executions &middot; "+esc(srcLabel);
-  QUERY=""; $("q").value=""; DFROM=0; DTO=0; $("dfrom").value=""; $("dto").value="";
+  QUERY=""; $("q").value=""; reapplyCaseWindow();   // keep the remembered/active case window across a load
   CURCAT="all"; highlightCat();
   SORTKEY=4; SORTDIR=-1; TSORTKEY=1; TSORTDIR=-1;
   setView("exec", true);
@@ -980,7 +990,7 @@ function hasTag(r,t){ for(var i=0;i<r.tags.length;i++){ if(r.tags[i]===t) return
 /* ---------- pf table ---------- */
 var COLS=[
   {h:"Tags", sk:function(r){return -r.score;}, cell:function(r){return '<td class="first">'+tagHtml(r)+'</td>';}},
-  {h:"Executable", sk:function(r){return r.exeL;}, cell:function(r){return '<td class="mono lnk" data-q="'+esc(r.exe)+'" title="'+esc(r.exe)+'">'+esc(r.exe)+'</td>';}},
+  {h:"Executable", sk:function(r){return r.exeL;}, cell:function(r){return '<td class="mono" title="'+esc(r.exe)+' — click the row for full detail">'+esc(r.exe)+'</td>';}},
   {h:"Run path", sk:function(r){return r.runPathL;}, cell:function(r){return '<td class="mono" title="'+esc(r.runPathDisp)+'">'+esc(r.runPathDisp)+'</td>';}},
   {h:"Runs", sk:function(r){return r.runCount;}, cell:function(r){return '<td class="mono" style="text-align:right">'+esc(r.runCount)+'</td>';}},
   {h:"LastRun (UTC)", sk:function(r){return r.msLast;}, cell:function(r){return '<td class="mono">'+esc(r.lastRun)+'</td>';}},
@@ -1095,6 +1105,9 @@ function loadSettings(){
   }catch(e){ SETTINGS={}; }
   if(!SETTINGS) SETTINGS={};
   if(SETTINGS.colw && typeof SETTINGS.colw==="object") COLW=SETTINGS.colw;
+  if(SETTINGS.caseWin && typeof SETTINGS.caseWin==="object"){ var cw=SETTINGS.caseWin;
+    if(/^\d{4}-\d{2}-\d{2}$/.test(cw.from||"")) CASE_FROM=cw.from;
+    if(/^\d{4}-\d{2}-\d{2}$/.test(cw.to||"")) CASE_TO=cw.to; }
 }
 function saveSettings(){ try{ var p=settingsPath(); if(p) writeUtf8(p, JSON.stringify(SETTINGS)); }catch(e){} }
 
@@ -1176,7 +1189,7 @@ function gripReset(e){
 var TCOLS=[
   {h:"Tags", sk:function(ev){return -ev.rec.score;}, cell:function(ev){return '<td class="first">'+tagHtml(ev.rec)+'</td>';}},
   {h:"RunTime (UTC)", sk:function(ev){return ev.ms;}, cell:function(ev){return '<td class="mono">'+esc(ev.t)+'</td>';}},
-  {h:"Executable", sk:function(ev){return ev.rec.exeL;}, cell:function(ev){return '<td class="mono lnk" data-q="'+esc(ev.rec.exe)+'" title="'+esc(ev.rec.exe)+'">'+esc(ev.rec.exe)+'</td>';}},
+  {h:"Executable", sk:function(ev){return ev.rec.exeL;}, cell:function(ev){return '<td class="mono" title="'+esc(ev.rec.exe)+' — click the row for full detail">'+esc(ev.rec.exe)+'</td>';}},
   {h:"Run path", sk:function(ev){return ev.rec.runPathL;}, cell:function(ev){return '<td class="mono" title="'+esc(ev.rec.runPathDisp)+'">'+esc(ev.rec.runPathDisp)+'</td>';}},
   {h:"Which", sk:function(ev){return ev.which;}, cell:function(ev){return '<td class="muted">'+(ev.which===0?"last run":("prev "+ev.which))+'</td>';}},
   {h:"Runs", sk:function(ev){return ev.rec.runCount;}, cell:function(ev){return '<td class="mono" style="text-align:right">'+esc(ev.rec.runCount)+'</td>';}},
@@ -1494,6 +1507,10 @@ function init(){
   hostGuessFrom(LIVE_PREFETCH);
   $("hostName").onkeyup=function(){ HOST_TOUCHED=true; syncOutDir(); };
   $("outDir").onkeyup=function(){ OUT_TOUCHED=true; };
+  $("hostName").onchange=function(){ if(!BUSY){ try{ showOutDirCsvs(false); }catch(e){} } };
+  $("outDir").onchange=function(){ if(!BUSY){ try{ showOutDirCsvs(false); }catch(e){} } };
+  reapplyCaseWindow();               // show any case window remembered from a previous run (CLI /from:/to: overrides later)
+  try{ showOutDirCsvs(false); }catch(e){}   // pre-fill the Produced CSVs picker if this host already has output
   loadToolkitIoc();   // shared toolkit IOC.txt — merged before any CLI /auto run
 
   var zoom=0.9;
@@ -1532,7 +1549,9 @@ function init(){
   $("pfPick").onchange=function(){ if(this.value){ var v=this.value;
     if($("inMode").value==="d"){ var i=v.lastIndexOf("\\"); if(i>0) v=v.substring(0,i); }
     $("pfPath").value=v; hostGuessFrom(v); } };
-  $("loadBtn").onclick=function(){ $("csvPick").click(); };
+  // Load Existing CSV: prefer the output folder (_Processed\<host>\PECmd); fall back to the file picker
+  // (HTML file inputs can't be pointed at a start folder, so they'd otherwise open the last-browsed path).
+  $("loadBtn").onclick=function(){ if(!showOutDirCsvs(true)) $("csvPick").click(); };
   $("csvPick").onchange=function(){ if(this.value){ setStatus("Loading "+this.value,"muted"); loadCsvFile(this.value); } };
   $("logToggle").onclick=function(){ var l=$("log");
     if(l.style.display==="none"||!l.style.display){
@@ -1547,11 +1566,11 @@ function init(){
 
   $("q").onkeyup=function(){ if(qTimer) window.clearTimeout(qTimer);
     qTimer=window.setTimeout(function(){ QUERY=trimStr($("q").value).toLowerCase(); render(); },150); };
-  $("dfrom").onchange=function(){ DFROM=dayNum(this.value); render(); };
-  $("dto").onchange=function(){ DTO=dayNum(this.value); render(); };
+  $("dfrom").onchange=function(){ var v=trimStr(this.value); CASE_FROM=/^\d{4}-\d{2}-\d{2}$/.test(v)?v:""; DFROM=dayNum(v); persistCaseWin(); render(); };
+  $("dto").onchange=function(){ var v=trimStr(this.value); CASE_TO=/^\d{4}-\d{2}-\d{2}$/.test(v)?v:""; DTO=dayNum(v); persistCaseWin(); render(); };
   $("srcSel").onchange=function(){ SRCFILTER=this.value; render(); };
   $("clearBtn").onclick=function(){ $("q").value="";$("dfrom").value="";$("dto").value="";$("srcSel").value="";
-    QUERY="";DFROM=0;DTO=0;SRCFILTER="";CURCAT="all"; highlightCat(); render(); };
+    QUERY="";DFROM=0;DTO=0;SRCFILTER="";CURCAT="all";CASE_FROM="";CASE_TO=""; persistCaseWin(); highlightCat(); render(); };
   $("exportBtn").onclick=exportView;
   $("copyBtn").onclick=copyNotes;
 
@@ -1647,7 +1666,17 @@ var CASE_FROM="", CASE_TO="";
 function applyCaseWindow(from,to){
   if(from){ if(/^\d{4}-\d{2}-\d{2}$/.test(from)){ CASE_FROM=from; try{ $("dfrom").value=from; DFROM=dayNum(from); }catch(e){} } else appendLog("CLI: ignoring invalid /from value '"+from+"'"); }
   if(to){ if(/^\d{4}-\d{2}-\d{2}$/.test(to)){ CASE_TO=to; try{ $("dto").value=to; DTO=dayNum(to); }catch(e2){} } else appendLog("CLI: ignoring invalid /to value '"+to+"'"); }
-  if(CASE_FROM||CASE_TO) appendLog("CLI: case window "+(CASE_FROM||"…")+" .. "+(CASE_TO||"…")+" — prefilled the date filter (filter only, never scored)");
+  if(CASE_FROM||CASE_TO){ appendLog("CLI: case window "+(CASE_FROM||"…")+" .. "+(CASE_TO||"…")+" — prefilled the date filter (filter only, never scored)"); persistCaseWin(); }
+}
+/* Persist the active case window so it survives a reboot / manual reload — a CLI /from:/to: only
+   reaches the app when it's launched THROUGH the Finder; a hand-loaded CSV carries none. */
+function persistCaseWin(){ SETTINGS.caseWin={from:CASE_FROM||"", to:CASE_TO||""}; try{ saveSettings(); }catch(e){} }
+/* Push the (possibly-empty) remembered window into the date filter + fields. Used on launch and
+   after every CSV load, so loading data never silently blanks an active case window. */
+function reapplyCaseWindow(){
+  DFROM = CASE_FROM ? dayNum(CASE_FROM) : 0;
+  DTO   = CASE_TO   ? dayNum(CASE_TO)   : 0;
+  try{ $("dfrom").value=CASE_FROM||""; $("dto").value=CASE_TO||""; }catch(e){}
 }
 function parseCli(){ var toks=tokenizeCmdTail(), cli={input:"",outDir:"",auto:false,from:"",to:""};
   for(var i=0;i<toks.length;i++){ var t=toks[i];

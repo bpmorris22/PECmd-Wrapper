@@ -31,7 +31,7 @@ No install, no dependencies, no framework: one `.hta` file that runs on any Wind
    - `C:\Windows\Prefetch` for the live machine (**run elevated** — the app detects and tells you if it can't read it),
    - a collected `Windows\Prefetch` folder from a KAPE / Velociraptor / other collection tree (URL-encoded paths like `C%3A` are handled),
    - or a single `.pf` file.
-4. Or skip processing entirely and **Load existing CSV…** to analyze a PECmd CSV you already have. Non-prefetch CSVs (e.g. the Timeline CSV) open in a generic sortable grid.
+4. Or skip processing entirely and **Load existing CSV…** to analyze a PECmd CSV you already have — it lists the CSVs already sitting in this host's `_Processed\<host>\PECmd` output folder in the *Produced CSVs* picker (and falls back to a file dialog if that folder is empty). Non-prefetch CSVs (e.g. the Timeline CSV) open in a generic sortable grid.
 
 ## Suspicion heuristics
 
@@ -70,7 +70,7 @@ mshta.exe "PECmd-Wrapper.hta" "<inputOrCsv>" ["<outDir>"] [/auto] [/from:yyyy-MM
 - **Shared IOC list** — an `IOC.txt` next to the app (one term per line, `#` comments) is auto-merged into the IOC box at launch; one list covers the whole toolkit and terms you paste locally are kept.
 - **Run provenance + triage summary** — every successful run appends a `runinfo.json` entry (app, host, input path, files) in the output folder, including a triage summary (entries, flagged count, max score, top hits); the DFIR-Windows-Artifact-Finder shows these per host in its inventory, even for standalone runs.
 - `/auto` — process immediately.
-- `/from:yyyy-MM-dd` `/to:yyyy-MM-dd` — case window (UTC, inclusive): prefills the date filter and is recorded in `runinfo.json`; never affects scoring. The [DFIR-Windows-Artifact-Finder](https://github.com/bpmorris22/DFIR-Windows-Artifact-Finder) passes these on every launch.
+- `/from:yyyy-MM-dd` `/to:yyyy-MM-dd` — case window (UTC, inclusive): prefills the date filter and is recorded in `runinfo.json`; never affects scoring. The [DFIR-Windows-Artifact-Finder](https://github.com/bpmorris22/DFIR-Windows-Artifact-Finder) passes these on every launch. The window is also remembered between launches (in the settings sidecar) and re-applied when you load a CSV, so a reboot or a manual reload keeps your date filter.
 
 ## Credits
 
