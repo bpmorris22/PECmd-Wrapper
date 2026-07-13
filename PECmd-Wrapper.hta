@@ -243,7 +243,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.11.0";
+var APP_VERSION = "0.11.1";
 var KNOWN_LATEST_PECMD = "2026.5.0";                                            // baseline as of 2026-07-02
 var PECMD_ZIP_URL = "https://download.ericzimmermanstools.com/net9/PECmd.zip";  // official EZ mirror (.NET 9 build)
 var PECMD_PAGE = "https://ericzimmerman.github.io/";                            // for live latest-version lookup
@@ -552,11 +552,11 @@ function evaluateTooling(promptIfNeeded){
     }
   }
 }
-function downloadLatest(){
+function downloadLatest(silent, done){   // silent: skip the confirms (unattended /auto); done(ok): fired after install
   var target=htaFolder()||EXE_DIR;   // always install next to the .hta (self-contained)
-  if(!target){ setStatus("Cannot determine the app folder to install into","err"); return; }
-  if(!WEB_OK && !confirm("The Zimmerman Tools site did not respond earlier (no internet?).\n\nTry downloading PECmd from\n"+PECMD_ZIP_URL+"\ninto\n"+target+" anyway?")) return;
-  if(WEB_OK && !confirm("Download latest PECmd (v"+(LATEST_VER||KNOWN_LATEST_PECMD)+") from:\n"+PECMD_ZIP_URL+"\n\nInstall next to the app into:\n"+target+"\n\nProceed?")) return;
+  if(!target){ setStatus("Cannot determine the app folder to install into","err"); if(done) done(false); return; }
+  if(!silent && !WEB_OK && !confirm("The Zimmerman Tools site did not respond earlier (no internet?).\n\nTry downloading PECmd from\n"+PECMD_ZIP_URL+"\ninto\n"+target+" anyway?")) return;
+  if(!silent && WEB_OK && !confirm("Download latest PECmd (v"+(LATEST_VER||KNOWN_LATEST_PECMD)+") from:\n"+PECMD_ZIP_URL+"\n\nInstall next to the app into:\n"+target+"\n\nProceed?")) return;
   setStatus("Downloading & installing PECmd… (the app stays responsive; give it a moment)","muted");
   var tq=String(target).replace(/'/g,"''");
   var ps=["$ErrorActionPreference='Stop'",
@@ -575,9 +575,23 @@ function downloadLatest(){
     "Write-Output 'INSTALL_OK'"];
   runPsAsync(ps, function(log){
     appendLog("--- PECmd download / install ---\n"+log);
-    if((log+"").indexOf("INSTALL_OK")>=0){ setStatus("PECmd installed to "+target,"ok"); evaluateTooling(false); }
-    else setStatus("Download/install failed — see log","err");
+    if((log+"").indexOf("INSTALL_OK")>=0){ setStatus("PECmd installed to "+target,"ok"); evaluateTooling(false); if(done) done(true); }
+    else { setStatus("Download/install failed — see log","err"); if(done) done(false); }
   });
+}
+/* /auto launch: if the tool exe is missing, fetch it first and run in the install callback.
+   The Finder's Process / Process-all fires wrappers unattended, so a missing exe must self-resolve
+   rather than just erroring. Exe already present, or genuinely offline, falls straight through to the
+   normal run (processPf emits the existing clear "not found / no internet" message when offline). */
+function autoProcess(){
+  if(EXE && fileExists(EXE)){ processPf(); return; }
+  if(WEB_OK){
+    setStatus("PECmd.exe not present - downloading it before this auto run…","muted");
+    appendLog("/auto: PECmd.exe missing - fetching it before processing");
+    downloadLatest(true, function(ok){ if(ok) processPf(); });
+    return;
+  }
+  processPf();   // offline: let processPf surface the existing "download it first" error
 }
 
 /* ---------- actions ---------- */
@@ -1795,7 +1809,7 @@ function applyCli(cli){ if(!cli.input) return false;
   else { setStatus("CLI input not found: "+cli.input,"err"); appendLog("CLI input not found: "+cli.input); return false; }
   if(cli.outDir){ $("outDir").value=cli.outDir; OUT_TOUCHED=true; hostGuessFrom(cli.outDir); }
   else hostGuessFrom(cli.input);
-  if(cli.auto){ appendLog("CLI: /auto — processing "+cli.input); window.setTimeout(function(){ processPf(); },200); }
+  if(cli.auto){ appendLog("CLI: /auto — processing "+cli.input); window.setTimeout(function(){ autoProcess(); },200); }
   else setStatus("CLI: input prefilled — click 'Process → analyze' to run.","muted");
   return true; }
 
