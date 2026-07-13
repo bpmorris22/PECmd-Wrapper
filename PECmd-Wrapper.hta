@@ -38,7 +38,7 @@
 <style>
   html{margin:0;height:100%;background:#0d1117}
   body{margin:0;height:100%;background:#0d1117;color:#e6edf3;font-family:Segoe UI,Tahoma,sans-serif;font-size:16px}
-  #content{zoom:0.9}
+  #content{zoom:0.9;width:111.111%;box-sizing:border-box}   /* zoom<1 shrinks a 100%-wide block below viewport width — widen by 1/zoom in CSS so it fills the window from the first paint (applyZoom keeps it in sync for A-/A+) */
   a{color:#58a6ff}
   .mono{font-family:Consolas,"Courier New",monospace}
   .muted{color:#8b949e}
@@ -203,6 +203,8 @@
       </div>
       <div class="row" style="margin-bottom:8px">
         <input class="txt" id="q" placeholder="search all columns + loaded files&hellip;" style="width:280px">
+        <span id="userWrap" class="hide"><span class="sep"></span><label class="muted" style="font-size:12px">user:</label>
+          <select id="userSel" title="Filter to executables whose run path sits in one user's profile (…\Users\&lt;name&gt;\…). NOTE: prefetch is a system-wide artifact and records no invoking account — this isolates binaries that ran FROM a user's profile, not who ran them. Executables on system paths (or whose run path wasn't recovered from FilesLoaded) group as (no user path)."><option value="">All users</option></select></span>
         <span id="srcWrap" class="hide"><span class="sep"></span><label class="muted" style="font-size:12px">source:</label>
           <select id="srcSel" title="Filter by source file."><option value="">all source files</option></select></span>
         <span id="pfDateCtl" class="hide">
@@ -227,7 +229,7 @@
         <span class="muted" id="iocInfo" style="font-size:11px"></span>
       </div>
       <div class="scroll" id="tblScroll"><table id="tbl"></table></div>
-      <div class="muted" id="pfFoot" style="font-size:11px;margin-top:6px">All timestamps UTC. Suspicious rows are shaded (heuristic score &ge; 2: user-path execution, LOLBIN, masquerade, IOC hits&hellip;). Click a row for full detail (all run times, volumes, directories, loaded files). Max 6000 rows shown; export writes the full filtered set.</div>
+      <div class="muted" id="pfFoot" style="font-size:11px;margin-top:6px">All timestamps UTC. Suspicious rows are shaded (heuristic score &ge; 2: user-path execution, LOLBIN, masquerade, IOC hits&hellip;). Click a row for full detail (all run times, volumes, directories, loaded files); click a User cell (or the user: dropdown) to isolate executables that ran from one profile's path — a path attribute, not the invoking account (prefetch records neither). Max 6000 rows shown; export writes the full filtered set.</div>
     </div>
 
     <div class="card hide" id="detailCard">
@@ -241,7 +243,7 @@
 <script language="JScript">
 "use strict";
 
-var APP_VERSION = "0.10.1";
+var APP_VERSION = "0.11.0";
 var KNOWN_LATEST_PECMD = "2026.5.0";                                            // baseline as of 2026-07-02
 var PECMD_ZIP_URL = "https://download.ericzimmermanstools.com/net9/PECmd.zip";  // official EZ mirror (.NET 9 build)
 var PECMD_PAGE = "https://ericzimmerman.github.io/";                            // for live latest-version lookup
@@ -269,8 +271,8 @@ var GHEAD = null, GROWS = [], GSRC = "";
 var GSORTKEY = -1, GSORTDIR = 1;
 var GSRCIDX = -1;                    // generic mode: index of the SourceFile(name) column
 var SRCFILTER = "";                  // selected source-file filter (generic mode)
+var USERFILTER = "";                 // selected user filter (pf mode; userDisp from the run path — content, not provenance; "" = all)
 var BUSY = false;                    // a PECmd run is in progress
-var PRODUCED = [];                   // CSVs produced by the last run
 
 /* suspicion knobs (spec §7) */
 var USERPATHS = ["\\users\\","\\appdata\\","\\temp\\","\\downloads\\","\\programdata\\","\\perflogs\\","\\windows\\temp\\","\\$recycle.bin\\","\\public\\"];
@@ -413,6 +415,25 @@ function pollDone(ctx){
   window.setTimeout(function(){ pollDone(ctx); }, 1000);
 }
 
+/* Stage a PowerShell script in %TEMP% and run it hidden WITHOUT blocking the UI, then cb(log).
+   The one path for every download (PECmd install, field guide, self-update) — the old sync
+   runBat froze MSHTML for the whole multi-MB transfer, so the "Downloading…" status never even
+   painted. -File (not -Command) so quoting never hits cmd's nesting limits. One at a time. */
+var PSBUSY=false;
+function runPsAsync(psLines, cb){
+  if(PSBUSY){ setStatus("Another download is already in progress — wait for it to finish.","err"); return false; }
+  var fso=new ActiveXObject("Scripting.FileSystemObject");
+  var ps1=fso.GetSpecialFolder(2)+"\\pecmd_ps_"+uid()+".ps1";
+  try{ var f=fso.CreateTextFile(ps1,true); f.Write(psLines.join("\r\n")); f.Close(); }
+  catch(ew){ setStatus("Could not stage the download script: "+ew.message,"err"); return false; }
+  PSBUSY=true;
+  var ctx=runBatAsync(['powershell -NoProfile -ExecutionPolicy Bypass -File "'+ps1+'" > "__LOG__" 2>&1'], false);
+  ctx.onDone=function(log){ PSBUSY=false; try{ fso.DeleteFile(ps1); }catch(e){} cb(log); };
+  ctx.onTimeout=function(){ PSBUSY=false; try{ fso.DeleteFile(ps1); }catch(e){} cb("(still running after 30 minutes — gave up waiting)"); };
+  window.setTimeout(function(){ pollDone(ctx); }, 1000);
+  return true;
+}
+
 /* ---------- source-file filter (generic mode) ---------- */
 function distinctVals(arr){ var seen={}, out=[]; for(var i=0;i<arr.length;i++){ var v=arr[i]; if(v!=null && v!=="" && !seen[v]){ seen[v]=1; out.push(v); } } return out; }
 function shortPathN(p,n){ p=String(p); var parts=p.split("\\"); if(parts.length<=n) return p; return "…\\"+parts.slice(parts.length-n).join("\\"); }
@@ -425,15 +446,38 @@ function populateSourceFilter(vals){
   SRCFILTER=""; sel.value="";
   showEl("srcWrap", vals.length>1);
 }
+/* CONTENT-derived user (not provenance): the \Users\<name>\ segment of the executable's run path.
+   Prefetch is system-wide and records no invoking user, so this answers "ran from user X's profile",
+   not "user X ran it". Blank => system path or a run path PECmd couldn't recover from FilesLoaded. */
+function userFromPath(p){ if(!p) return ""; var m=String(p).match(/[\\\/]users[\\\/]([^\\\/]+)/i); return m?m[1]:""; }
+function populateUserFilter(vals){
+  var sel=$("userSel"); if(!sel) return;
+  var prev=USERFILTER, found=false;
+  sel.innerHTML="";
+  var o0=document.createElement("option"); o0.value=""; o0.text="All users ("+vals.length+")"; sel.add(o0);
+  vals=vals.slice(0).sort();
+  for(var i=0;i<vals.length;i++){ var o=document.createElement("option"); o.value=vals[i]; o.text=vals[i]; sel.add(o);
+    if(vals[i]===prev) found=true; }
+  if(prev&&found){ sel.value=prev; } else { USERFILTER=""; sel.value=""; }
+  showEl("userWrap", vals.length>1);
+}
 
 /* ---------- tooling: locate / version / download ---------- */
 function fileExists(p){ try{ return new ActiveXObject("Scripting.FileSystemObject").FileExists(p); }catch(e){ return false; } }
 function folderExists(p){ try{ return new ActiveXObject("Scripting.FileSystemObject").FolderExists(p); }catch(e){ return false; } }
 function parentDir(p){ var i=String(p).lastIndexOf("\\"); return i>=0?p.substring(0,i):p; }
+/* location.pathname → filesystem path. Local files arrive as "/C:/dir/file.hta" (strip the lone
+   leading slash); UNC launches arrive as "//server/share/…" where BOTH slashes must survive —
+   stripping one yields "\server\…" and every app-folder-anchored feature (IOC.txt, settings,
+   _Processed default, self-update target) silently misses. */
+function locPath(){
+  var p=decodeURIComponent(location.pathname+"").replace(/\//g,"\\");
+  return /^\\[A-Za-z]:/.test(p) ? p.substring(1) : p;
+}
 function htaFolder(){
   try{ var cl=pecmdHta.commandLine+""; var m=cl.match(/"([^"]+\.hta)"/i); if(!m) m=cl.match(/([A-Za-z]:\\[^"]+\.hta)/i);
     if(m) return parentDir(m[1]); }catch(e){}
-  try{ var p=decodeURIComponent(location.pathname+"").replace(/^\//,"").replace(/\//g,"\\"); return parentDir(p); }catch(e2){}
+  try{ return parentDir(locPath()); }catch(e2){}
   return "";
 }
 function resolveExe(){
@@ -513,28 +557,27 @@ function downloadLatest(){
   if(!target){ setStatus("Cannot determine the app folder to install into","err"); return; }
   if(!WEB_OK && !confirm("The Zimmerman Tools site did not respond earlier (no internet?).\n\nTry downloading PECmd from\n"+PECMD_ZIP_URL+"\ninto\n"+target+" anyway?")) return;
   if(WEB_OK && !confirm("Download latest PECmd (v"+(LATEST_VER||KNOWN_LATEST_PECMD)+") from:\n"+PECMD_ZIP_URL+"\n\nInstall next to the app into:\n"+target+"\n\nProceed?")) return;
-  setStatus("Downloading & installing PECmd… (give it a moment)","muted");
+  setStatus("Downloading & installing PECmd… (the app stays responsive; give it a moment)","muted");
   var tq=String(target).replace(/'/g,"''");
-  var ps="$ErrorActionPreference='Stop';"
-    +"[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;"
-    +"$u='"+PECMD_ZIP_URL+"';"
-    +"$z=Join-Path $env:TEMP 'PECmd_dl.zip';"
-    +"$x=Join-Path $env:TEMP ('PECmd_x_'+[guid]::NewGuid().ToString('N'));"
-    +"Invoke-WebRequest -Uri $u -OutFile $z;"
-    +"Expand-Archive -Force -Path $z -DestinationPath $x;"
-    +"$exe=Get-ChildItem -Path $x -Recurse -Filter PECmd.exe | Select-Object -First 1;"
-    +"if(-not $exe){throw 'PECmd.exe not found in downloaded archive'};"
-    +"$src=Split-Path $exe.FullName;"
-    +"New-Item -ItemType Directory -Force -Path '"+tq+"' | Out-Null;"
-    +"Copy-Item -Path (Join-Path $src '*') -Destination '"+tq+"' -Recurse -Force;"
-    +"Remove-Item $z,$x -Recurse -Force -ErrorAction SilentlyContinue;"
-    +"Write-Output 'INSTALL_OK'";
-  try{
-    var r=runBat(['powershell -NoProfile -ExecutionPolicy Bypass -Command "'+ps+'" > "__LOG__" 2>&1']);
-    appendLog("--- PECmd download / install ---\n"+r.log);
-    if((r.log+"").indexOf("INSTALL_OK")>=0){ setStatus("PECmd installed to "+target,"ok"); evaluateTooling(false); }
+  var ps=["$ErrorActionPreference='Stop'",
+    "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12",
+    "$u='"+PECMD_ZIP_URL+"'",
+    "$z=Join-Path $env:TEMP 'PECmd_dl.zip'",
+    "$x=Join-Path $env:TEMP ('PECmd_x_'+[guid]::NewGuid().ToString('N'))",
+    "Invoke-WebRequest -Uri $u -OutFile $z",
+    "Expand-Archive -Force -Path $z -DestinationPath $x",
+    "$exe=Get-ChildItem -Path $x -Recurse -Filter PECmd.exe | Select-Object -First 1",
+    "if(-not $exe){throw 'PECmd.exe not found in downloaded archive'}",
+    "$src=Split-Path $exe.FullName",
+    "New-Item -ItemType Directory -Force -Path '"+tq+"' | Out-Null",
+    "Copy-Item -Path (Join-Path $src '*') -Destination '"+tq+"' -Recurse -Force",
+    "Remove-Item $z,$x -Recurse -Force -ErrorAction SilentlyContinue",
+    "Write-Output 'INSTALL_OK'"];
+  runPsAsync(ps, function(log){
+    appendLog("--- PECmd download / install ---\n"+log);
+    if((log+"").indexOf("INSTALL_OK")>=0){ setStatus("PECmd installed to "+target,"ok"); evaluateTooling(false); }
     else setStatus("Download/install failed — see log","err");
-  }catch(e){ setStatus("Download failed: "+e.message,"err"); }
+  });
 }
 
 /* ---------- actions ---------- */
@@ -702,7 +745,7 @@ function processPf(){
     '"'+batEsc(EXE)+'" '+flag+' "'+binp+'" --csv "'+bout+'"'+extra+' > "__LOG__" 2>&1'
   ], true);
   ctx.onTick=function(s){ setStatus("PECmd running… "+s+"s elapsed (app responsive; results load when done)","muted"); };
-  ctx.onTimeout=function(){ BUSY=false; $("procBtn").disabled=false; setStatus("PECmd still running after 30 min — stopped watching. Check the output folder / console window.","err"); };
+  ctx.onTimeout=function(){ BUSY=false; $("procBtn").disabled=false; setStatus("PECmd is still running after 30 min — stopped watching (huge --vss runs can do this). When its console window closes, click 'Load existing CSV…' — the output folder's CSVs appear in the Produced picker.","err"); };
   ctx.onDone=function(log){ BUSY=false; $("procBtn").disabled=false; processPfDone(log,outdir,before); };
   setStatus("PECmd starting…","muted");
   window.setTimeout(function(){ pollDone(ctx); }, 1000);
@@ -728,7 +771,6 @@ function processPfDone(log,outdir,before){
   var errs=(log.match(/Error opening/gi)||[]).length;
   var errNote = errs ? (" — note: "+errs+" file(s) failed to parse (corrupt/sparse .pf; see log).") : "";
   writeRunInfo(outdir, $("pfPath").value, fresh);
-  PRODUCED=fresh;
   populateProduced(fresh);
   // auto-load the main output (one row per prefetch file); Timeline stays available in the picker
   var main=null;
@@ -767,7 +809,7 @@ function openDir(){ var d=$("outDir").value; if(!d){ setStatus("No output direct
 function showOutDirCsvs(announce){
   var d=trimStr($("outDir").value); if(!d) return 0;
   var l=listCsvFiles(d); if(!l.length){ if(announce) setStatus("No CSVs in "+d+" yet — process this host first, or use the file picker for another location.","muted"); return 0; }
-  PRODUCED=l; populateProduced(l);
+  populateProduced(l);
   if(announce) setStatus("Found "+l.length+" CSV(s) in the output folder — pick one from 'Produced CSVs' below and click 'Load selected'.","ok");
   return l.length;
 }
@@ -862,6 +904,7 @@ function ingestPf(raw, idx, srcLabel){
       msLast:msOf(lastRun), dayLast:dayOf(lastRun), msCreated:msOf(cell(rw,iSC)),
       tags:[], reasons:[], score:0, sus:false, recent:false, multi:false
     };
+    rec.userDisp=userFromPath(runPathDisp)||"(no user path)";   // content-user from the run path (no FilesLoaded fallback — D6)
     rec.filesDirsL=(stripVol(rawDirs)+" "+stripVol(rawFiles)).toLowerCase();
     rec.blob=(exe+" "+runPathDisp+" "+rec.hash+" "+rec.src+" "+rec.ver+" "+rec.note).toLowerCase();
     ROWS.push(rec);
@@ -875,6 +918,9 @@ function ingestPf(raw, idx, srcLabel){
   rescoreAll();
   setMode("pf");
   populateSourceFilter([]);
+  USERFILTER="";
+  var uvals=[]; for(var uu=0;uu<ROWS.length;uu++) uvals.push(ROWS[uu].userDisp);
+  populateUserFilter(distinctVals(uvals));
   $("results").className="";
   $("srcpill").innerHTML=nf(ROWS.length)+" prefetch files &middot; "+nf(EVENTS.length)+" executions &middot; "+esc(srcLabel);
   QUERY=""; $("q").value=""; reapplyCaseWindow();   // keep the remembered/active case window across a load
@@ -1019,7 +1065,8 @@ var COLS=[
   {h:"Hash", sk:function(r){return r.hash;}, cell:function(r){return '<td class="mono muted">'+esc(r.hash)+'</td>';}},
   {h:"Size", sk:function(r){return r.size;}, cell:function(r){return '<td class="mono" style="text-align:right">'+esc(nf(r.size))+'</td>';}},
   {h:"Source .pf", sk:function(r){return r.src.toLowerCase();}, cell:function(r){return '<td class="mono muted" title="'+esc(r.src)+'">'+esc(shortPathN(r.src,2))+'</td>';}},
-  {h:"Note", sk:function(r){return (r.note||(r.parseErr?"parse error":"")).toLowerCase();}, cell:function(r){var t=r.note||(r.parseErr?"parse error":""); return '<td class="muted" title="'+esc(t)+'">'+esc(t)+'</td>';}}
+  {h:"Note", sk:function(r){return (r.note||(r.parseErr?"parse error":"")).toLowerCase();}, cell:function(r){var t=r.note||(r.parseErr?"parse error":""); return '<td class="muted" title="'+esc(t)+'">'+esc(t)+'</td>';}},
+  {h:"User", sk:function(r){return String(r.userDisp).toLowerCase();}, cell:function(r){return '<td class="mono muted lnk" data-user="'+esc(r.userDisp)+'" title="Ran from this profile path — click to filter. '+esc(r.userDisp)+'">'+esc(r.userDisp)+'</td>';}}
 ];
 function tagHtml(r){
   var t="",i;
@@ -1031,18 +1078,15 @@ function tagHtml(r){
   return t;
 }
 function filteredPf(){
+  // category + search checks live in evPass (shared with the timeline view — one place to
+  // extend when a tag category is added); only the user and LastRun-date filters are exec-view-local
   var out=[];
   for(var i=0;i<ROWS.length;i++){
     var r=ROWS[i];
-    if(CURCAT==="sus"&&!r.sus) continue;
-    if(CURCAT==="userpath"&&!hasTag(r,"USERPATH")) continue;
-    if(CURCAT==="lolbin"&&!hasTag(r,"LOLBIN")) continue;
-    if(CURCAT==="rare"&&!hasTag(r,"RARE")) continue;
-    if(CURCAT==="recent"&&!r.recent) continue;
-    if(CURCAT==="ioc"&&!hasTag(r,"IOC")) continue;
+    if(USERFILTER && r.userDisp!==USERFILTER) continue;
     if(DFROM&&(!r.dayLast||r.dayLast<DFROM)) continue;
     if(DTO&&(!r.dayLast||r.dayLast>DTO)) continue;
-    if(QUERY){ if(r.blob.indexOf(QUERY)<0 && r.filesDirsL.indexOf(QUERY)<0) continue; }
+    if(!evPass(r)) continue;
     out.push(r);
   }
   return out;
@@ -1095,19 +1139,19 @@ function render(){
   html+="</tbody>";
   $("tbl").innerHTML=html;
   $("count").innerHTML=nf(rows.length)+" rows"+(shown<rows.length?(" (showing "+nf(shown)+")"):"");
-  wireHeaders();
+  wireSort(function(k){ if(SORTKEY===k) SORTDIR*=-1; else { SORTKEY=k; SORTDIR=1; } render(); });
   setupColResize();
   applyFreeze();
   window.__viewRows=rows;
 }
-function wireHeaders(){
+/* header-click sorting, shared by all three views: apply(colIndex) toggles that view's sort
+   state and re-renders. Resize-grip interactions never sort. */
+function wireSort(apply){
   var ths=$("tbl").getElementsByTagName("th");
   for(var i=0;i<ths.length;i++){ ths[i].onclick=function(e){
     e=e||window.event; var t=e.target||e.srcElement;
-    if(t && /\bcgrip\b/.test(t.className+"")) return;   // resize-grip interactions must not sort
-    var k=parseInt(this.getAttribute("data-k"),10);
-    if(SORTKEY===k) SORTDIR*=-1; else { SORTKEY=k; SORTDIR=1; }
-    render();
+    if(t && /\bcgrip\b/.test(t.className+"")) return;
+    apply(parseInt(this.getAttribute("data-k"),10));
   }; }
 }
 function applyFreeze(){
@@ -1214,7 +1258,8 @@ var TCOLS=[
   {h:"Run path", sk:function(ev){return ev.rec.runPathL;}, cell:function(ev){return '<td class="mono" title="'+esc(ev.rec.runPathDisp)+'">'+esc(ev.rec.runPathDisp)+'</td>';}},
   {h:"Which", sk:function(ev){return ev.which;}, cell:function(ev){return '<td class="muted">'+(ev.which===0?"last run":("prev "+ev.which))+'</td>';}},
   {h:"Runs", sk:function(ev){return ev.rec.runCount;}, cell:function(ev){return '<td class="mono" style="text-align:right">'+esc(ev.rec.runCount)+'</td>';}},
-  {h:"Source .pf", sk:function(ev){return ev.rec.src.toLowerCase();}, cell:function(ev){return '<td class="mono muted" title="'+esc(ev.rec.src)+'">'+esc(shortPathN(ev.rec.src,2))+'</td>';}}
+  {h:"Source .pf", sk:function(ev){return ev.rec.src.toLowerCase();}, cell:function(ev){return '<td class="mono muted" title="'+esc(ev.rec.src)+'">'+esc(shortPathN(ev.rec.src,2))+'</td>';}},
+  {h:"User", sk:function(ev){return String(ev.rec.userDisp).toLowerCase();}, cell:function(ev){return '<td class="mono muted lnk" data-user="'+esc(ev.rec.userDisp)+'" title="Ran from this profile path — click to filter. '+esc(ev.rec.userDisp)+'">'+esc(ev.rec.userDisp)+'</td>';}}
 ];
 function evPass(r){
   if(CURCAT==="sus"&&!r.sus) return false;
@@ -1230,6 +1275,7 @@ function filteredTime(){
   var out=[];
   for(var i=0;i<EVENTS.length;i++){
     var ev=EVENTS[i];
+    if(USERFILTER && ev.rec.userDisp!==USERFILTER) continue;
     if(DFROM&&(!ev.day||ev.day<DFROM)) continue;
     if(DTO&&(!ev.day||ev.day>DTO)) continue;
     if(!evPass(ev.rec)) continue;
@@ -1293,14 +1339,7 @@ function renderTime(){
   html+="</tbody>";
   $("tbl").innerHTML=html;
   $("count").innerHTML=nf(evs.length)+" executions"+(shown<evs.length?(" (showing "+nf(shown)+")"):"");
-  var ths=$("tbl").getElementsByTagName("th");
-  for(var j=0;j<ths.length;j++){ ths[j].onclick=function(e){
-    e=e||window.event; var t=e.target||e.srcElement;
-    if(t && /\bcgrip\b/.test(t.className+"")) return;   // resize-grip interactions must not sort
-    var kk=parseInt(this.getAttribute("data-k"),10);
-    if(TSORTKEY===kk) TSORTDIR*=-1; else { TSORTKEY=kk; TSORTDIR=1; }
-    renderTime();
-  }; }
+  wireSort(function(k){ if(TSORTKEY===k) TSORTDIR*=-1; else { TSORTKEY=k; TSORTDIR=1; } renderTime(); });
   setupColResize();
   applyFreeze();
   window.__viewRows=evs;
@@ -1410,12 +1449,7 @@ function renderGeneric(){
     h+="</tr>"; }
   h+="</tbody>"; $("tbl").innerHTML=h;
   $("count").innerHTML=nf(rows.length)+" rows"+(shown<rows.length?(" (showing "+nf(shown)+")"):"");
-  var ths=$("tbl").getElementsByTagName("th");
-  for(var i2=0;i2<ths.length;i2++){ ths[i2].onclick=function(e){
-    e=e||window.event; var t=e.target||e.srcElement;
-    if(t && /\bcgrip\b/.test(t.className+"")) return;   // resize-grip interactions must not sort
-    var kk=parseInt(this.getAttribute("data-k"),10);
-    if(GSORTKEY===kk) GSORTDIR*=-1; else { GSORTKEY=kk; GSORTDIR=1; } renderGeneric(); }; }
+  wireSort(function(k){ if(GSORTKEY===k) GSORTDIR*=-1; else { GSORTKEY=k; GSORTDIR=1; } renderGeneric(); });
   setupColResize();
   applyFreeze();
   window.__viewRows=rows;
@@ -1424,7 +1458,7 @@ function setMode(m){
   MODE=m; var pf=(m==="pf");
   showEl("pfCards",pf); showEl("pfCats",pf); showEl("pfDateCtl",pf); showEl("pfFoot",pf);
   showEl("iocBtn",pf); showEl("viewToggle",pf);
-  if(!pf){ showEl("iocWrap",false); closeDetail(); }
+  if(!pf){ showEl("iocWrap",false); closeDetail(); showEl("userWrap",false); }   // generic mode uses the source dropdown, not the user filter
   if(pf) showEl("srcWrap",false);
   $("ovTitle").innerHTML = pf ? "Overview &mdash; reflects active filters" : "Overview";
   $("tableTitle").innerHTML = pf ? ((VIEW==="time")?"Execution timeline":"Prefetch executables") : "Records";
@@ -1434,18 +1468,23 @@ function setMode(m){
 function cq(v){ v=(v==null)?"":String(v); return /[",\r\n]/.test(v)?('"'+v.replace(/"/g,'""')+'"'):v; }
 function nowStamp(){ var d=new Date(); function p(x){return (x<10?"0":"")+x;}
   return d.getFullYear()+""+p(d.getMonth()+1)+p(d.getDate())+"_"+p(d.getHours())+p(d.getMinutes())+p(d.getSeconds()); }
+/* export destination — with no run yet and a blank outDir field, the old fallback produced
+   "\filtered_export_….csv" (root of the current drive, or access denied) */
+function exportDir(){ var d=trimStr(LASTOUTDIR||$("outDir").value);
+  if(!d) setStatus("Set an output directory first — exports are written there.","err");
+  return d; }
 function exportView(){
   if(MODE==="generic"){ exportGeneric(); return; }
   if(VIEW==="time"){ exportTimeline(); return; }
   var rows=window.__viewRows||[];
   if(!rows.length){ setStatus("Nothing to export","err"); return; }
-  var head=["ExecutableName","RunPath","Tags","Score","Suspicious","RunCount","LastRun_UTC","PreviousRuns_UTC","FirstSeen_pfCreated_UTC","Hash","SizeBytes","Version","Note","ParsingError","SourceFilename"];
+  var head=["ExecutableName","RunPath","User","Tags","Score","Suspicious","RunCount","LastRun_UTC","PreviousRuns_UTC","FirstSeen_pfCreated_UTC","Hash","SizeBytes","Version","Note","ParsingError","SourceFilename"];
   var lines=[head.join(",")];
   for(var i=0;i<rows.length;i++){ var r=rows[i];
-    lines.push([cq(r.exe),cq(r.runPathDisp),cq(r.tags.join("; ")),cq(r.score),cq(r.sus?"Yes":"No"),cq(r.runCount),
+    lines.push([cq(r.exe),cq(r.runPathDisp),cq(r.userDisp),cq(r.tags.join("; ")),cq(r.score),cq(r.sus?"Yes":"No"),cq(r.runCount),
       cq(r.lastRun),cq(r.runs.slice(1).join("; ")),cq(r.srcCreated),cq(r.hash),cq(r.size),cq(r.ver),
       cq(r.note),cq(r.parseErr?"True":"False"),cq(r.src)].join(",")); }
-  var dir=LASTOUTDIR||$("outDir").value;
+  var dir=exportDir(); if(!dir) return;
   var path=dir+"\\filtered_export_"+nowStamp()+".csv";
   try{ writeUtf8(path, lines.join("\r\n")); setStatus("Exported "+nf(rows.length)+" rows → "+path,"ok"); appendLog("Exported: "+path); }
   catch(e){ setStatus("Export failed: "+e.message,"err"); }
@@ -1453,12 +1492,12 @@ function exportView(){
 function exportTimeline(){
   var evs=window.__viewRows||[];
   if(!evs.length){ setStatus("Nothing to export","err"); return; }
-  var head=["RunTime_UTC","ExecutableName","RunPath","WhichRun","RunCount","Tags","Score","Suspicious","SourceFilename"];
+  var head=["RunTime_UTC","ExecutableName","RunPath","User","WhichRun","RunCount","Tags","Score","Suspicious","SourceFilename"];
   var lines=[head.join(",")];
   for(var i=0;i<evs.length;i++){ var ev=evs[i], r=ev.rec;
-    lines.push([cq(ev.t),cq(r.exe),cq(r.runPathDisp),cq(ev.which===0?"last run":("prev "+ev.which)),cq(r.runCount),
+    lines.push([cq(ev.t),cq(r.exe),cq(r.runPathDisp),cq(r.userDisp),cq(ev.which===0?"last run":("prev "+ev.which)),cq(r.runCount),
       cq(r.tags.join("; ")),cq(r.score),cq(r.sus?"Yes":"No"),cq(r.src)].join(",")); }
-  var dir=LASTOUTDIR||$("outDir").value;
+  var dir=exportDir(); if(!dir) return;
   var path=dir+"\\timeline_export_"+nowStamp()+".csv";
   try{ writeUtf8(path, lines.join("\r\n")); setStatus("Exported "+nf(evs.length)+" executions → "+path,"ok"); appendLog("Exported: "+path); }
   catch(e){ setStatus("Export failed: "+e.message,"err"); }
@@ -1468,7 +1507,7 @@ function exportGeneric(){
   if(!GHEAD||!rows.length){ setStatus("Nothing to export","err"); return; }
   var lines=[]; var hd=[]; for(var c=0;c<GHEAD.length;c++) hd.push(cq(GHEAD[c])); lines.push(hd.join(","));
   for(var i=0;i<rows.length;i++){ var rw=rows[i]; var cells=[]; for(var c2=0;c2<GHEAD.length;c2++) cells.push(cq(c2<rw.length?rw[c2]:"")); lines.push(cells.join(",")); }
-  var dir=LASTOUTDIR||$("outDir").value;
+  var dir=exportDir(); if(!dir) return;
   var path=dir+"\\filtered_export_"+nowStamp()+".csv";
   try{ writeUtf8(path, lines.join("\r\n")); setStatus("Exported "+nf(rows.length)+" rows → "+path,"ok"); appendLog("Exported: "+path); }
   catch(e){ setStatus("Export failed: "+e.message,"err"); }
@@ -1526,10 +1565,14 @@ function init(){
   // default output follows the target hostname: _Processed\<host>\PECmd next to the .hta
   // (the default input is the live Prefetch folder, so the first guess is this computer's name)
   hostGuessFrom(LIVE_PREFETCH);
+  /* keyup alone misses mouse-driven paste — mark the fields touched on paste/change too,
+     so a pasted hostname / outDir is never overwritten by a later path-based guess */
   $("hostName").onkeyup=function(){ HOST_TOUCHED=true; syncOutDir(); };
+  $("hostName").onpaste=function(){ HOST_TOUCHED=true; window.setTimeout(syncOutDir,0); };
   $("outDir").onkeyup=function(){ OUT_TOUCHED=true; };
-  $("hostName").onchange=function(){ if(!BUSY){ try{ showOutDirCsvs(false); }catch(e){} } };
-  $("outDir").onchange=function(){ if(!BUSY){ try{ showOutDirCsvs(false); }catch(e){} } };
+  $("outDir").onpaste=function(){ OUT_TOUCHED=true; };
+  $("hostName").onchange=function(){ HOST_TOUCHED=true; syncOutDir(); if(!BUSY){ try{ showOutDirCsvs(false); }catch(e){} } };
+  $("outDir").onchange=function(){ OUT_TOUCHED=true; if(!BUSY){ try{ showOutDirCsvs(false); }catch(e){} } };
   reapplyCaseWindow();               // show any case window remembered from a previous run (CLI /from:/to: overrides later)
   try{ showOutDirCsvs(false); }catch(e){}   // pre-fill the Produced CSVs picker if this host already has output
   loadToolkitIoc();   // shared toolkit IOC.txt — merged before any CLI /auto run
@@ -1590,8 +1633,10 @@ function init(){
   $("dfrom").onchange=function(){ var v=trimStr(this.value); CASE_FROM=/^\d{4}-\d{2}-\d{2}$/.test(v)?v:""; DFROM=dayNum(v); persistCaseWin(); render(); };
   $("dto").onchange=function(){ var v=trimStr(this.value); CASE_TO=/^\d{4}-\d{2}-\d{2}$/.test(v)?v:""; DTO=dayNum(v); persistCaseWin(); render(); };
   $("srcSel").onchange=function(){ SRCFILTER=this.value; render(); };
+  $("userSel").onchange=function(){ USERFILTER=this.value; render(); };
   $("clearBtn").onclick=function(){ $("q").value="";$("dfrom").value="";$("dto").value="";$("srcSel").value="";
-    QUERY="";DFROM=0;DTO=0;SRCFILTER="";CURCAT="all";CASE_FROM="";CASE_TO=""; persistCaseWin(); highlightCat(); render(); };
+    QUERY="";DFROM=0;DTO=0;SRCFILTER="";CURCAT="all";CASE_FROM="";CASE_TO=""; USERFILTER=""; try{ $("userSel").value=""; }catch(ec){}
+    persistCaseWin(); highlightCat(); render(); };
   $("exportBtn").onclick=exportView;
   $("copyBtn").onclick=copyNotes;
 
@@ -1606,9 +1651,11 @@ function init(){
   $("detClose").onclick=closeDetail;
   $("detCopy").onclick=copyDetail;
 
-  /* click delegation: data-q anywhere → search filter; pf table row → detail pane */
+  /* click delegation: data-user → sticky user filter; data-q anywhere → search filter; pf table row → detail pane */
   document.onclick=function(e){ e=e||window.event; var t=e.target||e.srcElement;
     if(t && /\bcgrip\b/.test((t.className||"")+"")) return;   // column-resize grips never act as row/link clicks
+    var du=t&&t.getAttribute?t.getAttribute("data-user"):null;
+    if(du!=null&&du!==""){ USERFILTER=du; try{ $("userSel").value=du; }catch(eu){} render(); return; }   // user-cell click = filter, not detail
     var q=t&&t.getAttribute?t.getAttribute("data-q"):null;
     if(q){ $("q").value=q; QUERY=q.toLowerCase(); render(); return; }
     if(MODE!=="pf") return;
@@ -1661,29 +1708,25 @@ function openInstructions(){
   var fso=new ActiveXObject("Scripting.FileSystemObject");
   var dest=fso.GetSpecialFolder(2)+"\\"+MANUAL_FILE;   // %TEMP% — overwritten each click with the latest
   setStatus("Downloading the field guide from GitHub (~5 MB)…","muted");
-  var ps1=fso.GetSpecialFolder(2)+"\\pe_man_"+uid()+".ps1";
   var dq=String(dest).replace(/'/g,"''");
-  var L=[];
-  L.push("$ErrorActionPreference='Stop'");
-  L.push("[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12");
-  L.push("Invoke-WebRequest -UseBasicParsing -Uri '"+MANUAL_URL+"' -OutFile '"+dq+"' -Headers @{ 'User-Agent'='PECmd-Wrapper' }");
-  L.push("if((Get-Item '"+dq+"').Length -lt 2000){ throw 'downloaded file too small' }");
-  L.push("Write-Output 'MAN_OK'");
-  try{ var f=fso.CreateTextFile(ps1,true); f.Write(L.join("\r\n")); f.Close(); }
-  catch(ew){ setStatus("Could not stage the field-guide download: "+ew.message,"err"); return; }
-  var r=runBat(['powershell -NoProfile -ExecutionPolicy Bypass -File "'+ps1+'" > "__LOG__" 2>&1']);
-  try{ fso.DeleteFile(ps1); }catch(e0){}
-  if((r.log+"").indexOf("MAN_OK")>=0 && fileExists(dest)){
-    if(openManualFile(dest)) setStatus("Field guide downloaded and opened in your browser.","ok");
-    appendLog("Field guide: downloaded latest -> "+dest);
-  } else {
-    appendLog("--- field-guide download ---\n"+r.log);
-    if(fileExists(dest)){
-      if(openManualFile(dest)) setStatus("Download failed (offline?) — opened the previously downloaded copy.","muted");
+  var L=["$ErrorActionPreference='Stop'",
+    "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12",
+    "Invoke-WebRequest -UseBasicParsing -Uri '"+MANUAL_URL+"' -OutFile '"+dq+"' -Headers @{ 'User-Agent'='PECmd-Wrapper' }",
+    "if((Get-Item '"+dq+"').Length -lt 2000){ throw 'downloaded file too small' }",
+    "Write-Output 'MAN_OK'"];
+  runPsAsync(L, function(log){
+    if((log+"").indexOf("MAN_OK")>=0 && fileExists(dest)){
+      if(openManualFile(dest)) setStatus("Field guide downloaded and opened in your browser.","ok");
+      appendLog("Field guide: downloaded latest -> "+dest);
     } else {
-      setStatus("Field-guide download failed (offline, or the file moved). See log; or open it from the GitHub repo.","err");
+      appendLog("--- field-guide download ---\n"+log);
+      if(fileExists(dest)){
+        if(openManualFile(dest)) setStatus("Download failed (offline?) — opened the previously downloaded copy.","muted");
+      } else {
+        setStatus("Field-guide download failed (offline, or the file moved). See log; or open it from the GitHub repo.","err");
+      }
     }
-  }
+  });
 }
 
 /* ---------- command-line invocation: "<inputOrCsv>" ["<outDir>"] [/auto] ----------
@@ -1694,7 +1737,7 @@ function openInstructions(){
 function getCommandLine(){
   try{ var cl=pecmdHta.commandLine+""; if(cl && cl!=="undefined") return cl; }catch(e){}
   try{
-    var lp=decodeURIComponent(location.pathname+"").replace(/^\//,"").replace(/\//g,"\\");
+    var lp=locPath();
     var fn=lp.substring(lp.lastIndexOf("\\")+1).toLowerCase(); if(!fn) return "";
     var loc=new ActiveXObject("WbemScripting.SWbemLocator"), svc=loc.ConnectServer(".","root\\cimv2");
     var q=svc.ExecQuery("SELECT CommandLine,CreationDate FROM Win32_Process WHERE Name='mshta.exe'");
@@ -1758,9 +1801,7 @@ function applyCli(cli){ if(!cli.input) return false;
 
 /* ---------- self-update: quiet check of this app's GitHub Releases; one-click download of a newer .hta ---------- */
 var SELF_REPO="bpmorris22/PECmd-Wrapper", SELF_HTA="PECmd-Wrapper.hta", SELF_LATEST="", SELF_ASSET_URL="";
-function selfVerNewer(r,l){ var a=String(r).split("."),b=String(l).split("."),n=Math.max(a.length,b.length);
-  for(var i=0;i<n;i++){ var x=parseInt(a[i],10)||0,y=parseInt(b[i],10)||0; if(x!==y) return x>y; } return false; }
-function selfPath(){ try{ var p=decodeURIComponent(location.pathname+"").replace(/^\//,"").replace(/\//g,"\\");
+function selfPath(){ try{ var p=locPath();
   if(/\.hta$/i.test(p) && fileExists(p)) return p; }catch(e){} return (htaFolder()||"")+"\\"+SELF_HTA; }
 function checkSelfUpdate(){
   try{
@@ -1770,7 +1811,7 @@ function checkSelfUpdate(){
     x.onreadystatechange=function(){ if(x.readyState!==4) return;
       try{ if(x.status!==200) return; var t=x.responseText+"";
         var m=t.match(/"tag_name"\s*:\s*"v?([0-9.]+)"/i); if(!m) return;
-        var latest=m[1]; var ap=$("apppill"); if(!selfVerNewer(latest,APP_VERSION)){ if(ap){ ap.className="pill ok"; ap.title="Up to date — v"+APP_VERSION+" is the latest release."; } return; }
+        var latest=m[1]; var ap=$("apppill"); if(verCmp(latest,APP_VERSION)<=0){ if(ap){ ap.className="pill ok"; ap.title="Up to date — v"+APP_VERSION+" is the latest release."; } return; }
         var url="", re=/"browser_download_url"\s*:\s*"([^"]+\.hta)"/ig, mm;
         while((mm=re.exec(t))){ if(mm[1].toLowerCase().indexOf(SELF_HTA.toLowerCase())>=0){ url=mm[1]; break; } if(!url) url=mm[1]; }
         if(!url) url="https://github.com/"+SELF_REPO+"/releases/download/v"+latest+"/"+SELF_HTA;
@@ -1788,22 +1829,18 @@ function doSelfUpdate(){
   if(!target || !/\.hta$/i.test(target)){ setStatus("Can't locate this app's own file to update in place.","err"); return; }
   if(!confirm("Download "+SELF_HTA+" v"+SELF_LATEST+" and replace this file?\n\n"+target+"\n\nAfter it downloads, close and reopen the app to run the new version.")) return;
   setStatus("Downloading v"+SELF_LATEST+"…","muted");
-  var fso=new ActiveXObject("Scripting.FileSystemObject"), tmp=fso.GetSpecialFolder(2)+"";
-  var ps1=tmp+"\\selfupd_"+new Date().getTime()+Math.floor(Math.random()*100000)+".ps1";
   var tq=String(target).replace(/'/g,"''"), uq=String(SELF_ASSET_URL).replace(/'/g,"''");
   var L=["$ErrorActionPreference='Stop'","[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12",
     "$u='"+uq+"'","$t='"+tq+"'","$tmp=Join-Path $env:TEMP ('selfupd_'+[guid]::NewGuid().ToString('N')+'.hta')",
     "Invoke-WebRequest -Uri $u -OutFile $tmp -Headers @{ 'User-Agent'='"+SELF_HTA+"' }",
     "if((Get-Item $tmp).Length -lt 2000){ throw 'downloaded file too small' }",
     "Copy-Item $tmp $t -Force","Remove-Item $tmp -Force -ErrorAction SilentlyContinue","Write-Output 'SELFUPD_OK'"];
-  try{ var f=fso.CreateTextFile(ps1,true); f.Write(L.join("\r\n")); f.Close(); }catch(ew){ setStatus("Self-update stage failed: "+ew.message,"err"); return; }
-  try{ var r=runBat(['powershell -NoProfile -ExecutionPolicy Bypass -File "'+ps1+'" > "__LOG__" 2>&1']);
-    try{ fso.DeleteFile(ps1); }catch(e0){}
-    if((r.log+"").indexOf("SELFUPD_OK")>=0){ var b=$("selfUpd"); if(b) b.className="btn primary hide";
+  runPsAsync(L, function(log){
+    if((log+"").indexOf("SELFUPD_OK")>=0){ var b=$("selfUpd"); if(b) b.className="btn primary hide";
       setStatus("Updated to v"+SELF_LATEST+" — CLOSE and reopen the app to run the new version.","ok");
       try{ alert("Update installed (v"+SELF_LATEST+").\n\nClose and reopen "+SELF_HTA+" to run the new version."); }catch(e){}
-    } else { appendLog("--- self-update ---\n"+r.log); setStatus("Self-update failed — see log; download manually from GitHub if needed.","err"); }
-  }catch(e){ setStatus("Self-update failed: "+e.message,"err"); }
+    } else { appendLog("--- self-update ---\n"+log); setStatus("Self-update failed — see log; download manually from GitHub if needed.","err"); }
+  });
 }
 window.onload=function(){ init(); try{ window.setTimeout(checkSelfUpdate,600); }catch(e){} };
 </script>
@@ -1832,6 +1869,7 @@ window.onload=function(){ init(); try{ window.setTimeout(checkSelfUpdate,600); }
     <h3>Notes</h3>
     <ul>
       <li>Two views: <b>Executables</b> (one row per prefetch file) and <b>Timeline</b> (every recorded execution). Suspicion scoring, IOC/keyword list, and a detail pane are built in.</li>
+      <li><b>User filter</b>: the <code>user:</code> dropdown (or clicking a User cell) isolates executables whose run path sits in one profile (<code>…\Users\&lt;name&gt;\…</code>). This is a <b>path attribute</b>, not the invoking account — prefetch is system-wide and records neither, so read it as "ran from user X's profile", not "user X ran this". System-path executables, and any whose run path PECmd couldn't recover from FilesLoaded, group under <code>(no user path)</code>. Both views and the CSV exports honor it.</li>
       <li>Columns are resizable &mdash; drag a header's right edge; double-click the edge to reset. Widths are remembered per view.</li>
       <li>All timestamps are UTC. Windows 11 24H2 prefetch (v31) needs PECmd 2026.x or newer.</li>
     </ul>
